@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<title>Gentle Shell</title>
+		<link rel="stylesheet" href="popup.css" />
+	</head>
+	<body>
+		<header>
+			<img class="logo" src="icons/icon-32.png" width="24" height="24" alt="" />
+			<strong class="title">Gentle Shell</strong>
+			<span id="status" class="pill">…</span>
+		</header>
+
+		<button id="stop" class="stop" hidden>STOP</button>
+
+		<p id="helper" class="hint" hidden></p>
+
+		<section id="sessions">
+			<label class="switch">
+				<input id="enabled" type="checkbox" />
+				<span>Connect to Gentle Shell sessions</span>
+			</label>
+			<ul id="session-list"></ul>
+			<p id="no-sessions" class="hint" hidden>No Gentle Shell session is running. Start Gentle Shell; it connects on its own.</p>
+		</section>
+
+		<section id="policy">
+			<fieldset class="levels">
+				<legend>Permission mode</legend>
+				<label class="level">
+					<input type="radio" name="level" value="always" />
+					<span><strong>Always ask</strong> Asks before every step.</span>
+				</label>
+				<label class="level">
+					<input type="radio" name="level" value="remember" />
+					<span><strong>Remember my decisions</strong> Asks, and you can save allow or deny per site and action type.</span>
+				</label>
+				<label class="level">
+					<input type="radio" name="level" value="never" />
+					<span><strong>Never ask</strong> Does whatever you tell it. Only the session group and STOP limit it.</span>
+				</label>
+			</fieldset>
+			<div id="rules" class="rules" hidden>
+				<div class="row spread">
+					<strong>Saved decisions</strong>
+					<button id="clear-rules" class="secondary">Clear all</button>
+				</div>
+				<ul id="rule-list"></ul>
+				<p id="no-rules" class="hint">None yet. Choose "Always allow" or "Always deny" when Gentle Shell asks.</p>
+			</div>
+		</section>
+
+		<p id="error" class="error" hidden></p>
+		<script type="module" src="popup.js"></script>
+	</body>
+</html>

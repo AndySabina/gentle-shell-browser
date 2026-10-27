@@ -1,0 +1,46 @@
+{
+	"name": "gentle-shell-browser",
+	"version": "0.1.0",
+	"description": "Let your Gentle Shell session drive your open Chrome, confined to its own tab group, with a visible cursor and your approval for risky steps.",
+	"type": "module",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/AndySabina/gentle-shell-browser.git"
+	},
+	"keywords": [
+		"pi-package",
+		"chrome",
+		"browser"
+	],
+	"pi": {
+		"extensions": [
+			"./src/index.ts"
+		]
+	},
+	"files": [
+		"src",
+		"extension"
+	],
+	"scripts": {
+		"test": "node --test \"test/**/*.test.ts\"",
+		"typecheck": "tsc --noEmit"
+	},
+	"engines": {
+		"node": ">=22.18"
+	},
+	"peerDependencies": {
+		"@earendil-works/pi-coding-agent": "*",
+		"typebox": "*"
+	},
+	"dependencies": {
+		"ws": "^8.22.0"
+	},
+	"devDependencies": {
+		"@earendil-works/pi-coding-agent": "^1.4.0",
+		"@types/node": "^26.6.5",
+		"@types/ws": "^8.18.2",
+		"typebox": "^1.4.3",
+		"typescript": "^7.0.2"
+	}
+}
