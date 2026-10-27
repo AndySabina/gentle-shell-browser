@@ -91,7 +91,7 @@ export class TabGroup {
 	 */
 	async requireTab(tabId) {
 		const groupId = await this.current();
-		if (groupId === undefined) throw new Error("There is no Gentle Shell group yet. Use browser_open to create it.");
+		if (groupId === undefined) throw new Error("There is no Gentle Shell group yet. Use browser_act with action \"open\" to create it.");
 		const outside = new Error(`Tab ${tabId} is not in the Gentle Shell group. Ask the user to drag it into the group.`);
 		if (typeof tabId !== "number" || !Number.isInteger(tabId)) throw outside;
 		let tab;

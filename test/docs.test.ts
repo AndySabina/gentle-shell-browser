@@ -3,6 +3,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { test } from "node:test";
 import { USAGE } from "../src/index.ts";
+import { BROWSER_TOOLS } from "../src/tools.ts";
 
 const root = new URL("../", import.meta.url).pathname;
 const guidePath = join(root, "docs/GUIDE.md");
@@ -55,6 +56,16 @@ test("every /browser subcommand the guide names is in the command's usage", () =
 	const named = [...read(guidePath).matchAll(/\/browser ([a-z]+)/g)].map((match) => match[1]);
 	assert.ok(named.length > 0, "the guide names /browser subcommands");
 	for (const name of named) assert.ok(known.has(name), `/browser ${name} is in ${USAGE}`);
+});
+
+test("the README and the guide name only the browser tools that exist, and list every one", () => {
+	const known = new Set<string>(BROWSER_TOOLS);
+	for (const path of [readmePath, guidePath]) {
+		const named = [...read(path).matchAll(/\bbrowser_([a-z]+)\b/g)].map((match) => match[0]);
+		for (const name of named) assert.ok(known.has(name), `${relative(root, path)} names ${name}`);
+		const listed = [...read(path).matchAll(/^\| `(browser_[a-z]+)` \|/gm)].map((match) => match[1]);
+		assert.deepEqual(listed.sort(), [...BROWSER_TOOLS].sort(), `${relative(root, path)} tool table`);
+	}
 });
 
 test("docs, README and the capture script carry no personal data", () => {

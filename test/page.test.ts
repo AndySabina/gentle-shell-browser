@@ -117,9 +117,37 @@ test("by default the text is the visible part of the page, at most 1500 characte
 	assert.equal(snapshot([], { text: long }).result.text.length, 1500);
 });
 
-test("full: true keeps the whole page text, at most 6000 characters", () => {
+test("full: true reads the text of the whole page, offscreen included, at most 6000 characters", () => {
 	const shown = button("shown", { left: 0, top: 0 });
-	const text = [{ value: "Visible", parent: shown }];
-	assert.equal(snapshot([], { full: true, text, innerText: "Visible\n\nBelow   the fold" }).result.text, "Visible Below the fold");
-	assert.equal(snapshot([], { full: true, innerText: "y".repeat(9000) }).result.text.length, 6000);
+	const below = button("below", { left: 0, top: HEIGHT + 500 });
+	const text = [
+		{ value: "Visible", parent: shown },
+		{ value: "Below   the fold", parent: below },
+	];
+	assert.equal(snapshot([], { full: true, text }).result.text, "Visible Below the fold");
+	assert.equal(snapshot([], { full: true, text: [{ value: "y".repeat(9000), parent: shown }] }).result.text.length, 6000);
+});
+
+test("the text leaves out what the listed elements already name, in both modes", () => {
+	const save = button("Save", { left: 10, top: 10 });
+	const link = button("Docs page", { left: 10, top: 50 });
+	const inLink = { ...button("", { left: 10, top: 50 }), parentElement: link };
+	const paragraph = button("", { left: 0, top: 100, width: WIDTH, height: 40 });
+	const text = [
+		{ value: "Intro paragraph", parent: paragraph },
+		{ value: "Save", parent: save },
+		{ value: "Docs page", parent: inLink },
+		{ value: "closing words", parent: paragraph },
+	];
+	for (const full of [false, true]) {
+		const { result } = snapshot([save, link], { full, text });
+		assert.deepEqual(result.elements.map((element: { name: string }) => element.name), ["Save", "Docs page"], String(full));
+		assert.equal(result.text, "Intro paragraph closing words", String(full));
+	}
+	// An element left out of the list keeps its text: the model has no other way to see it.
+	const many = page(80, 0).inside;
+	const extra = button("Extra", { left: 10, top: 10 });
+	const { result } = snapshot([...many, extra], { text: [{ value: "Extra", parent: extra }, { value: "in 3", parent: many[3] }] });
+	assert.equal(result.omitted, 1);
+	assert.equal(result.text, "Extra");
 });

@@ -183,7 +183,7 @@ test("requireTab explains when no group exists yet", async () => {
 	const chrome = fakeChrome();
 	chrome.addTab({ url: "https://outside.test/" });
 	const group = new TabGroup(chrome.api);
-	await assert.rejects(group.requireTab(chrome.tabs[0].id), { message: "There is no Gentle Shell group yet. Use browser_open to create it." });
+	await assert.rejects(group.requireTab(chrome.tabs[0].id), { message: "There is no Gentle Shell group yet. Use browser_act with action \"open\" to create it." });
 });
 
 test("a held tab leaves the group, is refused and hidden, and comes back only when admitted", async () => {

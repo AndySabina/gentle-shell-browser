@@ -136,7 +136,18 @@ function fakeActions() {
 	return { calls, click: record("click"), type: record("type"), key: record("key"), scroll: record("scroll"), navigate: record("navigate"), open };
 }
 
-function setup(initial: Record<string, unknown> = {}, policy: { level?: string; rules?: Record<string, Record<string, string>> } = {}) {
+/** What the fake CDP answers to Page.getLayoutMetrics: a viewport `width` CSS px wide at `dpr` device pixels per CSS px. */
+function layoutMetrics(width: number, height: number, dpr: number, pageX = 0, pageY = 0) {
+	const css = { clientWidth: width, clientHeight: height };
+	return {
+		cssLayoutViewport: { pageX, pageY, ...css },
+		cssVisualViewport: { pageX, pageY, offsetX: 0, offsetY: 0, zoom: 1, scale: 1, ...css },
+		layoutViewport: { pageX: pageX * dpr, pageY: pageY * dpr, clientWidth: width * dpr, clientHeight: height * dpr },
+		visualViewport: { pageX: pageX * dpr, pageY: pageY * dpr, offsetX: 0, offsetY: 0, zoom: 1, scale: 1, clientWidth: width * dpr, clientHeight: height * dpr },
+	};
+}
+
+function setup(initial: Record<string, unknown> = {}, policy: { level?: string; rules?: Record<string, Record<string, string>> } = {}, metrics = layoutMetrics(1280, 720, 1)) {
 	const chrome = fakeChrome(initial);
 	const cleared: (string | undefined)[] = [];
 	const actions = fakeActions();
@@ -144,6 +155,7 @@ function setup(initial: Record<string, unknown> = {}, policy: { level?: string; 
 	const sent: string[] = [];
 	const expressions: string[] = [];
 	const stops: (string | undefined)[] = [];
+	const requests: { method: string; params: any }[] = [];
 	const manager: SessionManager = new SessionManager({
 		storage: chrome.api.storage.local,
 		createGroup: (options) => new TabGroup(chrome.api, options),
@@ -156,8 +168,11 @@ function setup(initial: Record<string, unknown> = {}, policy: { level?: string; 
 							sent.push("evaluate");
 							expressions.push(expression);
 						},
-						async send(_tabId: number, method: string) {
+						async send(_tabId: number, method: string, params?: object) {
 							sent.push(method);
+							requests.push({ method, params });
+							if (method === "Page.getLayoutMetrics") return metrics;
+							if (method === "Page.captureScreenshot") return { data: "AAAA" };
 						},
 					},
 					settings: async () => ({ level: policy.level ?? "always", riskyDomains: [], rules: policy.rules ?? {} }),
@@ -177,7 +192,7 @@ function setup(initial: Record<string, unknown> = {}, policy: { level?: string; 
 			stops.push(owner);
 		},
 	});
-	return { chrome, actions, connections, manager, sent, expressions, stops, cleared };
+	return { chrome, actions, connections, manager, sent, expressions, stops, cleared, requests };
 }
 
 test("parseDiscovery accepts a valid reply and keeps only the known fields", () => {
@@ -499,4 +514,50 @@ test("snapshot reads the viewport by default and the whole page only with full: 
 		snapshotExpression({ full: true }),
 	]);
 	assert.notEqual(snapshotExpression({ full: true }), snapshotExpression({ full: false }));
+});
+
+test("screenshots are JPEG 60 of the visible viewport, at most 1024 px wide", async () => {
+	const cases = [
+		{ metrics: layoutMetrics(1280, 720, 1.5, 0, 300), clip: { x: 0, y: 300, width: 1280, height: 720 }, outWidth: 1024 },
+		{ metrics: layoutMetrics(800, 600, 1), clip: { x: 0, y: 0, width: 800, height: 600 }, outWidth: 800 },
+		{ metrics: layoutMetrics(1920, 1080, 1), clip: { x: 0, y: 0, width: 1920, height: 1080 }, outWidth: 1024 },
+		{ metrics: layoutMetrics(600, 400, 2), clip: { x: 0, y: 0, width: 600, height: 400 }, outWidth: 600 },
+	];
+	for (const { metrics, clip, outWidth } of cases) {
+		const { connections, manager, requests } = setup({}, {}, metrics);
+		await manager.sync({ token: TOKEN, sessions: [A] });
+		const { tabId } = await manager.get(A.id)!.group.openTab("https://a.test/");
+		assert.deepEqual(await connections.get(A.id)!.handlers.screenshot({ tabId }), { data: "AAAA", mimeType: "image/jpeg" });
+		const capture = requests.find((request) => request.method === "Page.captureScreenshot")!;
+		const { scale, ...box } = capture.params.clip;
+		assert.deepEqual(box, clip);
+		assert.equal(capture.params.format, "jpeg");
+		assert.equal(capture.params.quality, 60);
+		assert.equal(capture.params.captureBeyondViewport, false);
+		// Chrome renders the clip at scale × devicePixelRatio device pixels per CSS px.
+		const dpr = metrics.visualViewport.clientWidth / metrics.cssVisualViewport.clientWidth;
+		const width = Math.round(clip.width * scale * dpr);
+		assert.ok(width <= 1024, `${width} px`);
+		assert.equal(width, outWidth);
+	}
+});
+
+test("a screenshot of a background tab still fails after the timeout with the exact message", async () => {
+	const { connections, manager } = setup();
+	await manager.sync({ token: TOKEN, sessions: [A] });
+	const { tabId } = await manager.get(A.id)!.group.openTab("https://a.test/");
+	const handlers = sessionHandlers(manager, manager.get(A.id)!, {
+		actions: fakeActions() as any,
+		cdp: { evaluate: async () => undefined, send: (_tabId: number, method: string) => (method === "Page.getLayoutMetrics" ? Promise.resolve(layoutMetrics(1280, 720, 1)) : new Promise(() => {})) },
+		settings: async () => ({ level: "always", riskyDomains: [] }),
+		setLevel: async () => undefined,
+		clearRules: async () => undefined,
+		reload: async () => undefined,
+		version: "0.1.0",
+		screenshotTimeoutMs: 10,
+	});
+	void connections;
+	await assert.rejects(handlers.screenshot({ tabId }), {
+		message: `Tab ${tabId} is in the background, where Chrome does not paint it, so no screenshot could be taken. Use browser_snapshot instead, or ask the user to switch to that tab.`,
+	});
 });

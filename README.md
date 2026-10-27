@@ -133,14 +133,9 @@ The agent sees these tools only while Chrome is connected to its session; until 
 | Tool | Does |
 |------|------|
 | `browser_tabs` | Lists the tabs in the group (id, title, URL). |
-| `browser_open` | Opens an http(s) URL in a new tab inside the group, creating the group if needed. |
-| `browser_snapshot` | Reads a tab: URL, title, text and interactive elements with refs (`e12`). By default only the viewport: up to 80 elements on screen, the visible text (up to 1500 characters), and a count of the elements outside it. `full: true` reads the whole page (up to 300 elements, offscreen ones included, and 6000 characters of text). |
-| `browser_screenshot` | Captures what a tab shows as a JPEG. Fails after 5 s on a background tab, which Chrome does not paint. |
-| `browser_click` | Clicks an element (ref or x/y), any button, single or double click. |
-| `browser_type` | Types into a field; can clear it first and press Enter after. |
-| `browser_key` | Presses a key or shortcut (`Enter`, `Control+a`, `Shift+Tab`…). |
-| `browser_scroll` | Scrolls with the mouse wheel at an element, a point or the viewport center. |
-| `browser_navigate` | Loads a URL in a tab, or goes back, forward or reloads. |
+| `browser_snapshot` | Reads a tab: URL, title, text and interactive elements as `[ref] role "name"` with only the flags that matter (`type=`, `value=`, `checked`, `disabled`). By default only the viewport: up to 80 elements on screen, the visible text (up to 1500 characters), and a count of the elements outside it. `full: true` reads the whole page (up to 300 elements, offscreen ones included, and 6000 characters of text). `details: true` adds each link's address (shortened: path and query on the same site, host and path elsewhere, 80 characters at most) and each element's center. The text leaves out what the listed elements already name. |
+| `browser_act` | One step in a group tab, chosen by `action`: `click` (ref or x/y, any button, single or double click), `type` (into a field; can clear it first and press Enter after), `key` (`Enter`, `Control+a`, `Shift+Tab`…), `scroll` (mouse wheel at an element, a point or the viewport center), `navigate` (load a URL), `back`, `forward`, `reload`, and `open` (an http(s) URL in a new tab inside the group, creating the group if needed; needs no `tabId`). A step missing what its action needs is refused before anything reaches Chrome. The result says what happened, and the tab's title and URL only when the URL changed (always after a page load). |
+| `browser_screenshot` | Captures what a tab shows as a JPEG, at most 1024 pixels wide. Fails after 5 s on a background tab, which Chrome does not paint. |
 
 ### Environment variables
 
@@ -156,7 +151,7 @@ The agent sees these tools only while Chrome is connected to its session; until 
 - A session can only read or act on tabs in its own group. Any other tab id, including a tab in another session's group, gets "Tab N is not in the Gentle Shell group".
 - The agent never switches tabs for you: it opens and works in its tabs in the background, so you keep browsing in yours. Switch to a group tab to watch the cursor.
 - **Grant** a tab to a session by dragging it into that session's group. **Revoke** by dragging it out: the cursor and the debugger leave that tab at once.
-- `browser_open` creates the session's group in your last focused window.
+- `browser_act` with `open` creates the session's group in your last focused window.
 - A group you title exactly like a session's group yourself (for example "Gentle · docs") counts as granted to that session: it is adopted when its stored group is gone, unless another session owns it. A group whose title ends in " (ended)" is never adopted.
 - **Ended sessions.** When a session ends, its group stays with its tabs and is renamed **Gentle · <name> (ended)**. No session ever uses it again; close it or reuse the tabs yourself. The extension remembers the live sessions, so a session that ended while Chrome or the extension was not running gets its group renamed at the next discovery.
 - Actions run one at a time across all sessions.
@@ -171,7 +166,7 @@ Choose in the popup (applies at once) or with `/browser level`. Default: **Alway
 
 | Mode | What it does |
 |------|--------------|
-| **Always ask** (`always`) | Asks before every acting step: opening or loading a page (`browser_open`, `browser_navigate`, a click that loads a page, a tab an action opens), and every click, typing, key press and scroll. |
+| **Always ask** (`always`) | Asks before every acting step: opening or loading a page (`open`, `navigate`, `back`, `forward` and `reload` steps, a click that loads a page, a tab an action opens), and every click, typing, key press and scroll. |
 | **Remember my decisions** (`remember`) | Asks like Always ask, but the prompt also offers **Always allow … on \<site\>** and **Always deny … on \<site\>**. A saved decision answers that site and kind of step from then on, without asking. |
 | **Never ask** (`never`) | Asks nothing: the agent does whatever you tell it. Only the session's tab group and STOP limit it. The popup and `/browser level never` ask you to confirm first. |
 
@@ -210,7 +205,7 @@ These decide a step's kind (`money`, `irreversible` or its plain kind) and its `
 
 - Typing into a password, payment card, one-time code or IBAN/CVV field.
 - Pressing Enter in a message box (textarea or rich editor).
-- Submitting a form: Enter or `browser_type` with submit inside a form, or clicking (or pressing Enter/Space on) a submit button. Search forms are the exception: a `role=search` landmark, a search field, an action address containing "search", or a single text field named `q`, `query`, `search` or `s`. A form with a password or payment field is always risky.
+- Submitting a form: Enter or a `type` step with submit inside a form, or clicking (or pressing Enter/Space on) a submit button. Search forms are the exception: a `role=search` landmark, a search field, an action address containing "search", or a single text field named `q`, `query`, `search` or `s`. A form with a password or payment field is always risky.
 - Clicking a control, or pressing Enter or Space on a focused button or link, whose name says pay, buy, order, checkout, send, delete, remove, publish, post, transfer, confirm, unsubscribe, sign (not sign in/up/out/on), donate, cancel subscription, or the Spanish equivalents (pagar, comprar, enviar, eliminar, borrar, quitar, publicar, transferir, confirmar, firmar, donar).
 - Input on a target the extension cannot inspect: no element there, an iframe, frame, embed or object, or an unnamed shadow-DOM component. (Tab, Shift+Tab and Escape are exempt.)
 
@@ -236,7 +231,7 @@ A page also counts as risky by its address when:
 
 Before a navigation the destination's content is unknown, so only its address is named in the prompt. Right after a page loads, the extension reads it and tells the agent when it looks sensitive (`browser_snapshot` shows a `Risk:` line too); nothing pauses then, but the next action on that page is `money` or `irreversible` when its content says so.
 
-**The agent can only raise risk.** `browser_click`, `browser_type`, `browser_key`, `browser_navigate` and `browser_open` take an optional `risky` flag. `risky: true` makes that step ask in Always ask and Remember my decisions, even over a saved allow ("the agent marked this step as sensitive"); it has no effect in Never ask. `false`, or any other value, changes nothing, so the agent can never skip an approval the mode requires.
+**The agent can only raise risk.** `browser_act` takes an optional `risky` flag for every action but `scroll`. `risky: true` makes that step ask in Always ask and Remember my decisions, even over a saved allow ("the agent marked this step as sensitive"); it has no effect in Never ask. `false`, or any other value, changes nothing, so the agent can never skip an approval the mode requires.
 
 **The built-in list is not editable.** A page on it is reported to the agent as sensitive and named on the prompt's `Why:` line; it does not add a prompt by itself. An entry is a domain, which covers its subdomains, optionally with a path prefix such as `github.com/settings`. It covers payment providers, banks, webmail, account pages and cloud consoles (PayPal, Stripe, Mercado Pago, Google/Microsoft/Apple accounts, Gmail, Outlook, AWS, Azure, GCP…).
 
@@ -265,7 +260,7 @@ The popup and the on-page cursor, highlight, label and STOP banner follow the [G
 - **Late new tabs.** A tab Chrome adds to the group more than 2 seconds after a group tab opened it, with no action running, stays in the group. A tab you drag into the group within those 2 seconds may be taken out once; drag it again.
 - **Detectable by anti-bot sites.** Attaching the debugger enables `Runtime`, which some sites detect.
 - **Up to 100 sessions** (ports 48733–48832) at the same time.
-- **Chrome restart.** Group ids change; a restored group with the session's title is adopted by its title. If Chrome does not restore it, `browser_open` creates a new one. A group whose session ended while the extension was not running is renamed "(ended)" at the next discovery.
+- **Chrome restart.** Group ids change; a restored group with the session's title is adopted by its title. If Chrome does not restore it, the next `open` step creates a new one. A group whose session ended while the extension was not running is renamed "(ended)" at the next discovery.
 - **The helper starts WSL.** Each discovery runs the helper through `wsl.exe`, which takes a moment; the popup may show `Looking for Gentle Shell…` briefly.
 - **A held new tab** whose web address does not show within 3 seconds (for example a blank `window.open`) is asked for in Remember my decisions even with saved allows: it has no site yet.
 
@@ -278,7 +273,7 @@ The popup and the on-page cursor, highlight, label and STOP banner follow the [G
 | A session is **untrusted** | The listener on its port could not prove it knows the token: another program took the port. Turn the popup switch Off and On; restart that Gentle Shell session if it persists. |
 | No sessions listed, or a session stays **waiting** | Check `/browser status` in that session; run `/browser start`. A `GENTLE_CHROME_PORT` outside 48733–48832 is never connected. |
 | A session shows **replaced** | Another Chrome profile or window with the extension took that session. Turn the switch Off and On to take it back. |
-| "Tab N is not in the Gentle Shell group" | Drag the tab into this session's group, or ask the agent to use `browser_open`. |
+| "Tab N is not in the Gentle Shell group" | Drag the tab into this session's group, or ask the agent to open a page (`browser_act` with `open`). |
 | Every step is denied | Check the terminal for the prompt; answers time out after 5 minutes. |
 | A step is denied without a prompt ("saved rule: deny …") | You saved Always deny for that site and kind: `/browser rules` lists it; `/browser rules clear <site>` or the popup removes it. |
 | Changes do not show in Chrome | Run `/browser update`. If it says no folder is recorded, run `scripts/install-extension.sh` once. If it asks for a manual reload, press reload on the card in `chrome://extensions` once. |

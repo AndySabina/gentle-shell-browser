@@ -134,6 +134,8 @@ One limit: Chrome does not paint background tabs, so the agent's **screenshot** 
 
 A page reading (snapshot) covers what fits in the tab's view: up to 80 buttons, links and fields on screen, and the visible text. It also tells the agent how many elements are outside the view, so the agent scrolls, or asks for the whole page with `full: true` (up to 300 elements and more text). Reading only the view keeps each step cheap in tokens.
 
+Each element is one short line, such as `[e12] button "Subscribe"`, plus a field's type and value and whether it is checked or disabled. The page text leaves out what those lines already name. Link addresses and screen positions are left out unless the agent asks for them with `details: true`. Screenshots are at most 1024 pixels wide.
+
 ### Watching what it does
 
 Before every click, typing, key press or scroll, the cursor glides to the target and a label says what comes next. Your real mouse never moves.
@@ -312,6 +314,15 @@ Run these in Gentle Shell.
 | `/browser rules` | Lists the saved decisions. |
 | `/browser rules clear` | Asks you to confirm, then clears every saved decision. |
 | `/browser rules clear <site>` | Clears the saved decisions for one site. |
+
+The agent itself gets four tools, only while Chrome is connected to its session:
+
+| Tool | Does |
+|------|------|
+| `browser_tabs` | Lists the tabs in the session's group. |
+| `browser_snapshot` | Reads a tab (see [How the agent reads a page](#how-the-agent-reads-a-page)). |
+| `browser_act` | Takes one step: click, type, press a key, scroll, load a page, go back or forward, reload, or open a new tab in the group. Each step follows your permission mode. |
+| `browser_screenshot` | Captures what a tab shows, at most 1024 pixels wide. |
 
 ## 10. Troubleshooting
 

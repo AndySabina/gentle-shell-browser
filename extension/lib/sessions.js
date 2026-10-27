@@ -24,6 +24,8 @@ const ENDED = "(ended)";
 const ENABLED_KEY = "enabled";
 const APPROVAL_TIMEOUT_MS = 5 * 60_000;
 const SCREENSHOT_TIMEOUT_MS = 5000;
+/** Screenshots are at most this many pixels wide: the model reads every pixel as tokens. */
+const SCREENSHOT_MAX_WIDTH = 1024;
 
 /**
  * @typedef {{id: string, name: string, port: number}} SessionInfo
@@ -427,7 +429,18 @@ export function sessionHandlers(manager, session, deps) {
 		screenshot: async (params) => {
 			const tabId = await groupTab(params);
 			// Chrome does not paint background tabs, so a capture there can hang.
-			const capture = cdp.send(tabId, "Page.captureScreenshot", { format: "jpeg", quality: 70 });
+			const capture = (async () => {
+				const metrics = await cdp.send(tabId, "Page.getLayoutMetrics");
+				const view = metrics.cssVisualViewport;
+				// The deprecated visualViewport is in device pixels: their ratio is devicePixelRatio.
+				const dpr = metrics.visualViewport?.clientWidth / view.clientWidth || 1;
+				// Clip coordinates are CSS px of the page; Chrome renders the clip at
+				// scale × devicePixelRatio device pixels per CSS px, so dividing by the
+				// ratio makes the image min(width, 1024) pixels wide.
+				const scale = Math.min(1, SCREENSHOT_MAX_WIDTH / view.clientWidth) / dpr;
+				const clip = { x: view.pageX, y: view.pageY, width: view.clientWidth, height: view.clientHeight, scale };
+				return cdp.send(tabId, "Page.captureScreenshot", { format: "jpeg", quality: 60, clip, captureBeyondViewport: false });
+			})();
 			/** @type {ReturnType<typeof setTimeout> | undefined} */
 			let timer;
 			const timeout = new Promise((_, reject) => {

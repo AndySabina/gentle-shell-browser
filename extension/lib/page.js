@@ -11,7 +11,9 @@
  * (at most 80; `offscreen` counts the visible ones left out) and the text of
  * text nodes whose parent element intersects it (at most 1500 characters).
  * With `full` it covers the whole page: 300 elements, offscreen ones included,
- * and the body's innerText up to 6000 characters.
+ * and the text of every visible text node up to 6000 characters. In both
+ * modes the text leaves out text inside a listed element: its name already
+ * carries it.
  * @param {{ full?: boolean }} [options]
  */
 function snapshotPage(options) {
@@ -126,8 +128,31 @@ function snapshotPage(options) {
 		elements.push(entry);
 	}
 
-	/** Text of the text nodes whose parent element is visible and intersects the viewport. */
-	const viewportText = () => {
+	const listed = new Set(refs.values());
+	/** @type {Map<Element, boolean>} */
+	const named = new Map();
+	/** Whether `el` is a listed element or inside one. */
+	const inListed = (/** @type {Element} */ el) => {
+		const path = [];
+		let found = false;
+		for (let node = /** @type {Element | null | undefined} */ (el); node; node = node.parentElement) {
+			const known = named.get(node);
+			if (known !== undefined) {
+				found = known;
+				break;
+			}
+			path.push(node);
+			if (listed.has(node)) {
+				found = true;
+				break;
+			}
+		}
+		for (const node of path) named.set(node, found);
+		return found;
+	};
+
+	/** Text of the visible text nodes (in the viewport unless `full`) outside the listed elements. */
+	const pageText = () => {
 		if (!document.body) return "";
 		/** @type {Map<Element, boolean>} */
 		const shown = new Map();
@@ -140,7 +165,7 @@ function snapshotPage(options) {
 			if (!value || !parent) continue;
 			if (!shown.has(parent)) {
 				const rect = visibleBox(parent);
-				shown.set(parent, !!rect && inView(rect));
+				shown.set(parent, !!rect && (full || inView(rect)) && !inListed(parent));
 			}
 			if (!shown.get(parent)) continue;
 			parts.push(value);
@@ -157,7 +182,7 @@ function snapshotPage(options) {
 		omitted,
 		offscreen,
 		iframes: document.querySelectorAll("iframe, frame").length,
-		text: clip(full ? collapse(document.body?.innerText ?? "") : viewportText(), MAX_TEXT),
+		text: clip(pageText(), MAX_TEXT),
 	};
 }
 

@@ -374,7 +374,7 @@ export class Actions {
 	}
 
 	/**
-	 * browser_open: asks before the tab exists, creates it empty with
+	 * browser_act open: asks before the tab exists, creates it empty with
 	 * `createTab`, then loads `url` in it under the navigation guard.
 	 * @param {string} url validated http(s) URL
 	 * @param {() => Promise<{tabId: number, groupId: number}>} createTab
