@@ -95,11 +95,11 @@ Close and open Gentle Shell so it loads the package. The connection starts by it
 ### How to check it worked
 
 1. In Gentle Shell, run `/browser status`. It prints the session name and port, for example `session "my-app" (…) listening on 127.0.0.1:48733`, and whether Chrome is connected. Chrome connects within 30 seconds, or at once when you open the popup. The agent gets its `browser_*` tools only while Chrome is connected, so they cost no tokens before that.
-2. Click the extension icon in Chrome. The popup lists your session as **connected**, and the toolbar badge shows **ON** (or the number of connected sessions).
+2. Optionally, click the extension icon in Chrome. The popup's status pill shows **Connected (N)** with the number of connected sessions, and the toolbar badge shows **ON** (or that number).
 
-![The Gentle Shell popup with two sessions, my-app and docs-site, both connected, and the Always ask mode selected](images/popup-connected.png)
+![The Gentle Shell popup: status Connected (2), the connect switch on, and the Always ask mode selected](images/popup-connected.png)
 
-If the popup shows something else, see [Troubleshooting](#10-troubleshooting).
+If `/browser status` says Chrome is not connected, see [Troubleshooting](#10-troubleshooting).
 
 ## 4. Using it
 
@@ -330,9 +330,9 @@ The agent itself gets four tools, only while Chrome is connected to its session:
 |---------|-----|
 | The popup says **Gentle Shell helper not installed — run scripts/install-extension.sh once** (picture below) | Run `scripts/install-extension.sh`; it registers the helper. If the message stays, reload the extension once in `chrome://extensions`. |
 | The popup says **Gentle Shell helper sent an invalid reply** | The helper and the extension come from different copies of the code. Run `scripts/install-extension.sh` again. |
-| No session listed, or a session stays **waiting** or **connecting** | Run `/browser status` in that session, then `/browser start`. Open the popup to make the extension look again. |
-| A session is **untrusted** | Another program answered on that session's port and could not prove it knows the secret. Turn the popup switch Off and On; if it persists, restart that Gentle Shell session. |
-| A session shows **replaced** | Another Chrome profile with the extension took that session. Turn the switch Off and On to take it back. |
+| `/browser status` keeps saying Chrome is not connected | Run `/browser start` in that session. Open the popup to make the extension look again, and check that its switch is on. |
+| A session never connects (**untrusted**) | Another program answered on that session's port and could not prove it knows the secret. Turn the popup switch Off and On; if it persists, restart that Gentle Shell session. |
+| A session disconnects (**replaced**) | Another Chrome profile with the extension took that session. Turn the switch Off and On to take it back. |
 | "Tab N is not in the Gentle Shell group" | Drag the tab into this session's group, or ask the agent to open the page itself. |
 | The agent's screenshot fails after 5 seconds | Chrome does not paint background tabs. Switch to the tab, or let the agent read the page text instead. |
 | Every step is denied | Look for the prompt in the terminal of the session that asked; it times out after 5 minutes. |

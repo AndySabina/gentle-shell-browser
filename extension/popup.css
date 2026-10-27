@@ -172,48 +172,6 @@ label.switch {
 	cursor: pointer;
 }
 
-#session-list {
-	display: grid;
-	gap: 6px;
-	margin: 0;
-	padding: 0;
-	list-style: none;
-}
-
-#session-list li {
-	display: flex;
-	gap: 8px;
-	align-items: center;
-	padding: 8px 10px;
-	border: 1px solid var(--surface2);
-	border-radius: var(--radius-md);
-	background: var(--surface1);
-	overflow-wrap: anywhere;
-}
-
-#session-list .dot {
-	flex: none;
-	width: 8px;
-	height: 8px;
-	border-radius: var(--radius-pill);
-	background: var(--subtext0);
-}
-
-#session-list li[data-state="connected"] .dot {
-	background: var(--rose);
-	box-shadow: 0 0 6px var(--rose);
-}
-
-#session-list li[data-state="connecting"] .dot,
-#session-list li[data-state="waiting"] .dot {
-	background: var(--yellow);
-}
-
-#session-list li[data-state="untrusted"] .dot,
-#session-list li[data-state="unauthorized"] .dot {
-	background: var(--red);
-}
-
 .row {
 	display: flex;
 	gap: 6px;

@@ -36,9 +36,9 @@ While the agent works in a tab, you see what it does: a pink frame, a cursor tha
 
 ![The agent about to click "Subscribe" on a demo page: pink frame, ghost cursor on the button, the label Click · "Subscribe" and the STOP banner](docs/images/overlay.png)
 
-The extension popup shows the connected sessions, the permission mode and STOP:
+The extension popup shows how many sessions are connected, the On/Off switch, the permission mode and STOP:
 
-<img src="docs/images/popup-connected.png" alt="Extension popup: two connected sessions, Always ask selected, STOP button" width="320">
+<img src="docs/images/popup-connected.png" alt="Extension popup: Connected (2), the connect switch on, Always ask selected, STOP button" width="320">
 
 | Mode | What asks you |
 |---|---|
@@ -102,7 +102,7 @@ There is no pairing code. Every 30 seconds, when Chrome starts and whenever you 
 
 A session entry the helper lists that is not valid is skipped; the other sessions still connect. Gentle Shell records each session's name trimmed, without control characters, at most 60 characters, and "session" when empty.
 
-The popup lists the sessions as `name — connected`, `connecting`, `waiting` or `untrusted`, and has an **On/Off** switch: Off closes every connection and stops connecting until you turn it On again.
+The popup shows how many sessions are connected in its status pill and has an **On/Off** switch ("Connect to Gentle Shell sessions"): Off closes every connection and stops connecting until you turn it On again. Check a single session from Gentle Shell with `/browser status`.
 
 The token itself never travels over the socket. On every connection both sides exchange random nonces and prove they know the token with an HMAC that also names the session: Gentle Shell proves it first, then the extension. If whatever listens on a session's port cannot prove it (another program took the port), the extension closes that connection, stops retrying it and lists it as `untrusted`; turn the switch Off and On to try again.
 
@@ -270,9 +270,9 @@ The popup and the on-page cursor, highlight, label and STOP banner follow the [G
 |---------|-----|
 | Popup says **Gentle Shell helper not installed — run scripts/install-extension.sh once** | Run the script; it registers the helper. If it still shows, reload the extension once in `chrome://extensions`. |
 | Popup says **Gentle Shell helper sent an invalid reply** | The helper and the extension come from different checkouts: run `scripts/install-extension.sh` again. |
-| A session is **untrusted** | The listener on its port could not prove it knows the token: another program took the port. Turn the popup switch Off and On; restart that Gentle Shell session if it persists. |
+| A session never connects (**untrusted**) | The listener on its port could not prove it knows the token: another program took the port. Turn the popup switch Off and On; restart that Gentle Shell session if it persists. |
 | No sessions listed, or a session stays **waiting** | Check `/browser status` in that session; run `/browser start`. A `GENTLE_CHROME_PORT` outside 48733–48832 is never connected. |
-| A session shows **replaced** | Another Chrome profile or window with the extension took that session. Turn the switch Off and On to take it back. |
+| A session disconnects (**replaced**) | Another Chrome profile or window with the extension took that session. Turn the switch Off and On to take it back. |
 | "Tab N is not in the Gentle Shell group" | Drag the tab into this session's group, or ask the agent to open a page (`browser_act` with `open`). |
 | Every step is denied | Check the terminal for the prompt; answers time out after 5 minutes. |
 | A step is denied without a prompt ("saved rule: deny …") | You saved Always deny for that site and kind: `/browser rules` lists it; `/browser rules clear <site>` or the popup removes it. |

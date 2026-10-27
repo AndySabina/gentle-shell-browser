@@ -62,9 +62,9 @@ shot() {
 	echo "wrote docs/images/$name.png"
 }
 
-shot popup-connected "popup.html?connected" 320 468 2
-shot popup-remember "popup.html?remember" 320 622 2
-shot popup-never "popup.html?never" 320 482 2
+shot popup-connected "popup.html?connected" 320 380 2
+shot popup-remember "popup.html?remember" 320 534 2
+shot popup-never "popup.html?never" 320 394 2
 shot popup-helper-missing "popup.html?helper-missing" 320 381 2
 shot overlay "overlay.html" 1280 720 1
 shot overlay-waiting "overlay.html?waiting" 1280 720 1

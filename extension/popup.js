@@ -39,20 +39,6 @@ function render(state) {
 	$("helper").hidden = !state.helper.error;
 	$("helper").textContent = state.helper.error ?? "";
 	$("enabled").checked = state.enabled;
-	const list = $("session-list");
-	list.replaceChildren(
-		...state.sessions.map((session) => {
-			const item = document.createElement("li");
-			const dot = document.createElement("span");
-			dot.className = "dot";
-			const text = document.createElement("span");
-			text.textContent = `${session.name} — ${session.state}`;
-			item.append(dot, text);
-			item.title = session.title;
-			item.dataset.state = session.state;
-			return item;
-		}),
-	);
 	$("no-sessions").hidden = state.helper.state !== "ok" || state.sessions.length > 0;
 	$("stop").hidden = connected === 0;
 }
