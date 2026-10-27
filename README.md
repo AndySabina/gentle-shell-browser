@@ -30,6 +30,24 @@ The decision lives in the extension; the terminal only shows the question. A too
 2. Run `scripts/install-extension.sh` once and load the extension unpacked in Chrome.
 3. Ask the agent to open a page. It appears in a pink **Gentle · <session>** tab group.
 
+## A quick look
+
+While the agent works in a tab, you see what it does: a pink frame, a cursor that glides to the target, a label for each step and a **STOP** button. Your own mouse never moves, and the agent works in background tabs, so you keep browsing in yours.
+
+![The agent about to click "Subscribe" on a demo page: pink frame, ghost cursor on the button, the label Click · "Subscribe" and the STOP banner](docs/images/overlay.png)
+
+The extension popup shows the connected sessions, the permission mode and STOP:
+
+<img src="docs/images/popup-connected.png" alt="Extension popup: two connected sessions, Always ask selected, STOP button" width="320">
+
+| Mode | What asks you |
+|---|---|
+| **Always ask** | Every step. |
+| **Remember my decisions** | Asks, and you can save allow or deny per site and kind of step (for example, allow clicks on a site but keep asking before payments there). |
+| **Never ask** | Nothing. Only the session's tab group and STOP limit it. |
+
+**[Continue in the full guide →](docs/GUIDE.md)** for installing step by step, [using it](docs/GUIDE.md#4-using-it), [permission modes and saved decisions](docs/GUIDE.md#5-permission-modes), troubleshooting and uninstalling.
+
 ## Install
 
 The [user guide](docs/GUIDE.md#3-install) walks through the same steps with checks and pictures.

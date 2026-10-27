@@ -35,7 +35,10 @@ test("docs/GUIDE.md exists and the README links to it", () => {
 test("every image in docs/GUIDE.md and README.md is an existing PNG", () => {
 	let count = 0;
 	for (const path of [guidePath, readmePath]) {
-		for (const [, alt, src] of read(path).matchAll(/!\[([^\]]*)\]\(([^)\s]+)\)/g)) {
+		const text = read(path);
+		const markdown = [...text.matchAll(/!\[([^\]]*)\]\(([^)\s]+)\)/g)].map(([, alt, src]) => [alt, src]);
+		const html = [...text.matchAll(/<img\b[^>]*>/g)].map(([tag]) => [/\balt="([^"]*)"/.exec(tag)?.[1] ?? "", /\bsrc="([^"]*)"/.exec(tag)?.[1] ?? ""]);
+		for (const [alt, src] of [...markdown, ...html]) {
 			count++;
 			assert.ok(alt.trim(), `${src} has alt text`);
 			assert.match(src, /\.png$/, src);
