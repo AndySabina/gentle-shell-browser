@@ -1,3 +1,4 @@
 node_modules/
 .worktrees/
 extension/build.json
+test/.private-terms

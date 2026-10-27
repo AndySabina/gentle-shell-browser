@@ -2,6 +2,8 @@
 
 Let your Gentle Shell sessions drive the Chrome you already have open on Windows, using your profile, but **each one only inside its own tab group**, with a visible cursor and **a permission mode you choose**: ask before every step, remember your decisions per site and kind of step, or never ask.
 
+New here? Read the step-by-step **[user guide](docs/GUIDE.md)**, with pictures of the popup and the on-page cursor.
+
 It has two parts:
 
 - **Pi package** (`src/`): loaded by Gentle Shell. Adds the `browser_*` tools and the `/browser` command. Each session serves an authenticated WebSocket on its own `127.0.0.1` port and registers itself locally.
@@ -29,6 +31,8 @@ The decision lives in the extension; the terminal only shows the question. A too
 3. Ask the agent to open a page. It appears in a pink **Gentle · <session>** tab group.
 
 ## Install
+
+The [user guide](docs/GUIDE.md#3-install) walks through the same steps with checks and pictures.
 
 ### 1. Pi package
 
@@ -214,7 +218,7 @@ Before a navigation the destination's content is unknown, so only its address is
 
 **The agent can only raise risk.** `browser_click`, `browser_type`, `browser_key`, `browser_navigate` and `browser_open` take an optional `risky` flag. `risky: true` makes that step ask in Always ask and Remember my decisions, even over a saved allow ("the agent marked this step as sensitive"); it has no effect in Never ask. `false`, or any other value, changes nothing, so the agent can never skip an approval the mode requires.
 
-**The list is optional.** A page on it is reported to the agent as sensitive and named on the prompt's `Why:` line; it does not add a prompt by itself. It only adds extra domains, edited in the popup (**Save**, **Reset to defaults**). An entry is a domain, which covers its subdomains, optionally with a path prefix such as `github.com/settings`. It starts with payment providers, banks, webmail, account pages and cloud consoles (PayPal, Stripe, Mercado Pago, Google/Microsoft/Apple accounts, Gmail, Outlook, AWS, Azure, GCP…).
+**The built-in list is not editable.** A page on it is reported to the agent as sensitive and named on the prompt's `Why:` line; it does not add a prompt by itself. An entry is a domain, which covers its subdomains, optionally with a path prefix such as `github.com/settings`. It covers payment providers, banks, webmail, account pages and cloud consoles (PayPal, Stripe, Mercado Pago, Google/Microsoft/Apple accounts, Gmail, Outlook, AWS, Azure, GCP…).
 
 ## Safety model
 

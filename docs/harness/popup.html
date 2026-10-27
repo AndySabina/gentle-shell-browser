@@ -1,0 +1,18 @@
+<!doctype html>
+<!--
+	Renders the real extension popup (extension/popup.html, popup.css, popup.js)
+	with a stub `chrome` object and fake, anonymous state, for the guide's pictures.
+	Pick the state with the query string: ?connected, ?remember, ?never, ?helper-missing.
+	Open it from a copy that keeps docs/ and extension/ side by side, with Chrome's
+	--allow-file-access-from-files (scripts/capture-screenshots.sh does both).
+-->
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<!-- The popup's own relative URLs (popup.css, icons/, fonts/) resolve inside extension/. -->
+		<base href="../../extension/" />
+		<title>Gentle Shell popup harness</title>
+		<script type="module" src="../docs/harness/popup-harness.js"></script>
+	</head>
+	<body></body>
+</html>

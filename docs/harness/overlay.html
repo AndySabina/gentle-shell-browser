@@ -1,0 +1,95 @@
+<!doctype html>
+<!--
+	A fake shop page with the real on-page overlay (extension/lib/overlay.js)
+	drawn over it, for the guide's pictures. ?waiting shows the label the
+	cursor carries while Gentle Shell waits for your approval.
+-->
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<title>Example Store</title>
+		<style>
+			body {
+				margin: 0;
+				font: 16px/1.5 system-ui, "Segoe UI", sans-serif;
+				color: #1f2328;
+				background: #f6f7f9;
+			}
+			nav {
+				display: flex;
+				gap: 24px;
+				align-items: center;
+				padding: 18px 48px;
+				background: #ffffff;
+				border-bottom: 1px solid #e3e6ea;
+			}
+			nav strong {
+				flex: 1;
+				font-size: 20px;
+			}
+			nav a {
+				color: #57606a;
+				text-decoration: none;
+			}
+			main {
+				max-width: 720px;
+				margin: 72px auto;
+				padding: 40px 48px;
+				background: #ffffff;
+				border: 1px solid #e3e6ea;
+				border-radius: 12px;
+			}
+			h1 {
+				margin: 0 0 8px;
+				font-size: 32px;
+			}
+			p {
+				margin: 0 0 28px;
+				color: #57606a;
+			}
+			form {
+				display: flex;
+				gap: 12px;
+				align-items: end;
+			}
+			label {
+				display: grid;
+				flex: 1;
+				gap: 6px;
+				font-weight: 600;
+			}
+			input {
+				padding: 10px 12px;
+				font: inherit;
+				border: 1px solid #c9ced4;
+				border-radius: 8px;
+			}
+			button {
+				padding: 11px 22px;
+				font: inherit;
+				font-weight: 600;
+				color: #ffffff;
+				background: #2f6feb;
+				border: 0;
+				border-radius: 8px;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<strong>Example Store</strong>
+			<a href="#">Shop</a>
+			<a href="#">Deals</a>
+			<a href="#">Help</a>
+		</nav>
+		<main>
+			<h1>Get our weekly deals</h1>
+			<p>New arrivals and discounts, once a week. No spam.</p>
+			<form onsubmit="return false">
+				<label>Email <input id="email" type="email" placeholder="you@example.com" value="you@example.com" /></label>
+				<button id="subscribe" type="submit">Subscribe</button>
+			</form>
+		</main>
+		<script type="module" src="overlay-harness.js"></script>
+	</body>
+</html>
