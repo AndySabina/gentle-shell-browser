@@ -6,10 +6,18 @@
  * Builds the snapshot the model reads. Refs (`e<N>`) stay stable for an
  * element while the document lives, and `globalThis.__gentleRefs` maps each
  * ref of the latest snapshot to its element.
+ *
+ * By default it covers the viewport only: elements whose box intersects it
+ * (at most 80; `offscreen` counts the visible ones left out) and the text of
+ * text nodes whose parent element intersects it (at most 1500 characters).
+ * With `full` it covers the whole page: 300 elements, offscreen ones included,
+ * and the body's innerText up to 6000 characters.
+ * @param {{ full?: boolean }} [options]
  */
-function snapshotPage() {
-	const MAX_ELEMENTS = 300;
-	const MAX_TEXT = 6000;
+function snapshotPage(options) {
+	const full = options?.full === true;
+	const MAX_ELEMENTS = full ? 300 : 80;
+	const MAX_TEXT = full ? 6000 : 1500;
 	const MAX_NAME = 80;
 	const SELECTOR = [
 		"a[href]", "button", "input", "select", "textarea", "summary", "[contenteditable]:not([contenteditable=false])", "[tabindex]",
@@ -77,11 +85,17 @@ function snapshotPage() {
 
 	const width = window.innerWidth;
 	const height = window.innerHeight;
+	const inView = (/** @type {DOMRect} */ rect) => rect.right > 0 && rect.bottom > 0 && rect.left < width && rect.top < height;
 	const elements = [];
 	let omitted = 0;
+	let offscreen = 0;
 	for (const el of document.querySelectorAll(SELECTOR)) {
 		const rect = visibleBox(el);
 		if (!rect) continue;
+		if (!full && !inView(rect)) {
+			offscreen++;
+			continue;
+		}
 		if (elements.length >= MAX_ELEMENTS) {
 			omitted++;
 			continue;
@@ -112,14 +126,38 @@ function snapshotPage() {
 		elements.push(entry);
 	}
 
+	/** Text of the text nodes whose parent element is visible and intersects the viewport. */
+	const viewportText = () => {
+		if (!document.body) return "";
+		/** @type {Map<Element, boolean>} */
+		const shown = new Map();
+		const parts = [];
+		let length = 0;
+		const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+		for (let node = walker.nextNode(); node && length <= MAX_TEXT; node = walker.nextNode()) {
+			const value = collapse(node.nodeValue);
+			const parent = node.parentElement;
+			if (!value || !parent) continue;
+			if (!shown.has(parent)) {
+				const rect = visibleBox(parent);
+				shown.set(parent, !!rect && inView(rect));
+			}
+			if (!shown.get(parent)) continue;
+			parts.push(value);
+			length += value.length + 1;
+		}
+		return parts.join(" ");
+	};
+
 	return {
 		url: location.href,
 		title: document.title,
 		viewport: { width, height, scrollY: Math.round(window.scrollY) },
 		elements,
 		omitted,
+		offscreen,
 		iframes: document.querySelectorAll("iframe, frame").length,
-		text: clip(collapse(document.body?.innerText ?? ""), MAX_TEXT),
+		text: clip(full ? collapse(document.body?.innerText ?? "") : viewportText(), MAX_TEXT),
 	};
 }
 
@@ -198,9 +236,13 @@ function pageInfo() {
 	};
 }
 
-/** Expression for Debugger.evaluate that returns the page snapshot. */
-export function snapshotExpression() {
-	return `(${snapshotPage.toString()})()`;
+/**
+ * Expression for Debugger.evaluate that returns the page snapshot: the
+ * viewport by default, the whole page with `full`.
+ * @param {{ full?: boolean }} [options]
+ */
+export function snapshotExpression(options = {}) {
+	return `(${snapshotPage.toString()})(${JSON.stringify({ full: options.full === true })})`;
 }
 
 /**

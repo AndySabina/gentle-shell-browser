@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { TabGroup } from "../extension/lib/group.js";
+import { snapshotExpression } from "../extension/lib/page.js";
 import { INVALID_REPLY, parseDiscovery, SessionManager, sessionHandlers } from "../extension/lib/sessions.js";
 
 const TOKEN = "T".repeat(43);
@@ -141,6 +142,7 @@ function setup(initial: Record<string, unknown> = {}, policy: { level?: string; 
 	const actions = fakeActions();
 	const connections = new Map<string, FakeConnection>();
 	const sent: string[] = [];
+	const expressions: string[] = [];
 	const stops: (string | undefined)[] = [];
 	const manager: SessionManager = new SessionManager({
 		storage: chrome.api.storage.local,
@@ -150,8 +152,9 @@ function setup(initial: Record<string, unknown> = {}, policy: { level?: string; 
 				sessionHandlers(manager, session, {
 					actions,
 					cdp: {
-						async evaluate() {
+						async evaluate(_tabId: number, expression: string) {
 							sent.push("evaluate");
+							expressions.push(expression);
 						},
 						async send(_tabId: number, method: string) {
 							sent.push(method);
@@ -174,7 +177,7 @@ function setup(initial: Record<string, unknown> = {}, policy: { level?: string; 
 			stops.push(owner);
 		},
 	});
-	return { chrome, actions, connections, manager, sent, stops, cleared };
+	return { chrome, actions, connections, manager, sent, expressions, stops, cleared };
 }
 
 test("parseDiscovery accepts a valid reply and keeps only the known fields", () => {
@@ -480,4 +483,20 @@ test("never mode still confines each session to its own group, with the exact er
 	}
 	assert.deepEqual(actions.calls, []);
 	assert.deepEqual(sent, []);
+});
+
+test("snapshot reads the viewport by default and the whole page only with full: true", async () => {
+	const { connections, manager, expressions } = setup();
+	await manager.sync({ token: TOKEN, sessions: [A] });
+	const { tabId } = await manager.get(A.id)!.group.openTab("https://a.test/");
+	const handlers = connections.get(A.id)!.handlers;
+	for (const params of [{ tabId }, { tabId, full: false }, { tabId, full: "yes" }, { tabId, full: true }]) await handlers.snapshot(params);
+	const snapshots = expressions.filter((expression) => expression.includes("__gentleRefs"));
+	assert.deepEqual(snapshots, [
+		snapshotExpression({ full: false }),
+		snapshotExpression({ full: false }),
+		snapshotExpression({ full: false }),
+		snapshotExpression({ full: true }),
+	]);
+	assert.notEqual(snapshotExpression({ full: true }), snapshotExpression({ full: false }));
 });

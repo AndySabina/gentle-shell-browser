@@ -42,7 +42,7 @@ test("status reports listening, then connected with the extension version", asyn
 	const { ctl, configDir, statuses } = controller();
 	try {
 		await ctl.start();
-		assert.deepEqual(ctl.status(), [`Gentle Chrome: session "chrome" (${ctl.sessionId}) listening on 127.0.0.1:${ctl.port()}, Chrome not connected.`]);
+		assert.deepEqual(ctl.status(), [`Gentle Chrome: session "chrome" (${ctl.sessionId}) listening on 127.0.0.1:${ctl.port()}, Chrome not connected; the browser tools appear when it connects.`]);
 		const socket = new WebSocket(`ws://127.0.0.1:${ctl.port()}`, { origin: ORIGIN });
 		await new Promise((resolve) => socket.once("open", resolve));
 		authenticate(socket, loadOrCreateToken(configDir));
@@ -53,6 +53,43 @@ test("status reports listening, then connected with the extension version", asyn
 	} finally {
 		await ctl.stop();
 	}
+});
+
+test("the browser tools are shown only while Chrome is connected to this session", async () => {
+	const active: boolean[] = [];
+	const { ctl, configDir, statuses } = controller({ setBrowserToolsActive: (value) => active.push(value) });
+	try {
+		await ctl.start();
+		assert.deepEqual(active, []);
+		const token = loadOrCreateToken(configDir);
+		for (let i = 0; i < 2; i++) {
+			const socket = new WebSocket(`ws://127.0.0.1:${ctl.port()}`, { origin: ORIGIN });
+			await new Promise((resolve) => socket.once("open", resolve));
+			authenticate(socket, token);
+			await waitUntil(() => statuses.at(-1) === "Chrome: connected");
+			assert.equal(active.at(-1), true);
+			socket.close();
+			await waitUntil(() => statuses.at(-1) === "Chrome: waiting");
+			assert.equal(active.at(-1), false);
+		}
+		assert.deepEqual(active, [true, false, true, false]);
+	} finally {
+		await ctl.stop();
+	}
+	assert.equal(active.at(-1), false);
+});
+
+test("stop hides the browser tools even while Chrome is connected", async () => {
+	const active: boolean[] = [];
+	const { ctl, configDir, statuses } = controller({ setBrowserToolsActive: (value) => active.push(value) });
+	await ctl.start();
+	const socket = new WebSocket(`ws://127.0.0.1:${ctl.port()}`, { origin: ORIGIN });
+	await new Promise((resolve) => socket.once("open", resolve));
+	authenticate(socket, loadOrCreateToken(configDir));
+	await waitUntil(() => statuses.at(-1) === "Chrome: connected");
+	await ctl.stop();
+	assert.equal(active.at(-1), false);
+	socket.close();
 });
 
 test("start is idempotent and stop releases the port", async () => {

@@ -94,7 +94,7 @@ Close and open Gentle Shell so it loads the package. The connection starts by it
 
 ### How to check it worked
 
-1. In Gentle Shell, run `/browser status`. It prints the session name and port, for example `session "my-app" (…) listening on 127.0.0.1:48733`, and whether Chrome is connected. Chrome connects within 30 seconds, or at once when you open the popup.
+1. In Gentle Shell, run `/browser status`. It prints the session name and port, for example `session "my-app" (…) listening on 127.0.0.1:48733`, and whether Chrome is connected. Chrome connects within 30 seconds, or at once when you open the popup. The agent gets its `browser_*` tools only while Chrome is connected, so they cost no tokens before that.
 2. Click the extension icon in Chrome. The popup lists your session as **connected**, and the toolbar badge shows **ON** (or the number of connected sessions).
 
 ![The Gentle Shell popup with two sessions, my-app and docs-site, both connected, and the Always ask mode selected](images/popup-connected.png)
@@ -129,6 +129,10 @@ Talk to the agent as usual, for example:
 The agent works in background tabs. You keep browsing in your own tabs and windows. Switch to one of its tabs whenever you want to watch.
 
 One limit: Chrome does not paint background tabs, so the agent's **screenshot** of a background tab can fail after 5 seconds. Its page reading (snapshot) works anyway. Switch to the tab if you want screenshots to work.
+
+### How the agent reads a page
+
+A page reading (snapshot) covers what fits in the tab's view: up to 80 buttons, links and fields on screen, and the visible text. It also tells the agent how many elements are outside the view, so the agent scrolls, or asks for the whole page with `full: true` (up to 300 elements and more text). Reading only the view keeps each step cheap in tokens.
 
 ### Watching what it does
 
@@ -297,7 +301,7 @@ Run these in Gentle Shell.
 
 | Command | Does |
 |---------|------|
-| `/browser` or `/browser status` | Shows this session's name, id and port, and whether Chrome is connected. |
+| `/browser` or `/browser status` | Shows this session's name, id and port, and whether Chrome is connected. The agent's browser tools appear only while it is. |
 | `/browser start` | Starts the connection (it also starts with the session). |
 | `/browser stop` | Stops the connection; Chrome disconnects from this session. |
 | `/browser update` | Copies the extension to its folder now and reloads it in Chrome if it runs another build. |

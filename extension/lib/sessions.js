@@ -417,7 +417,7 @@ export function sessionHandlers(manager, session, deps) {
 		/** @param {any} params */
 		snapshot: async (params) => {
 			const tabId = await groupTab(params);
-			const snapshot = await cdp.evaluate(tabId, snapshotExpression());
+			const snapshot = await cdp.evaluate(tabId, snapshotExpression({ full: params?.full === true }));
 			// Content that cannot be read counts as risky.
 			const signals = await cdp.evaluate(tabId, pageRiskExpression()).catch(() => null);
 			const { riskyDomains } = await deps.settings();

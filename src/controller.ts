@@ -22,6 +22,8 @@ export interface ControllerDeps {
 	/** Aborts the running agent turn (the user pressed STOP in Chrome). */
 	abort(): void;
 	setStatus?(text: string | undefined): void;
+	/** Shows the browser tools to the model while Chrome is connected, and hides them otherwise. */
+	setBrowserToolsActive?(active: boolean): void;
 	/** Extra methods the Chrome extension may call, such as approval prompts. */
 	handlers?: Record<string, Handler>;
 	/** Tells the user what happened outside a command, such as an extension update. */
@@ -74,6 +76,7 @@ export class BrowserController {
 		this.unregister();
 		if (bridge) await bridge.close();
 		this.deps.setStatus?.(undefined);
+		this.deps.setBrowserToolsActive?.(false);
 	}
 
 	status(): string[] {
@@ -82,7 +85,7 @@ export class BrowserController {
 		const where = `session "${this.name}" (${this.sessionId}) listening on ${HOST}:${this.bridge.port}`;
 		return info
 			? [`Gentle Chrome: ${where}, Chrome connected (extension ${info.version}).`]
-			: [`Gentle Chrome: ${where}, Chrome not connected.`];
+			: [`Gentle Chrome: ${where}, Chrome not connected; the browser tools appear when it connects.`];
 	}
 
 	/** `/browser update`: copies the extension to its recorded folder now and reloads it if Chrome runs another build. */
@@ -149,6 +152,7 @@ export class BrowserController {
 			},
 			onConnectionChange: (info) => {
 				this.deps.setStatus?.(info ? "Chrome: connected" : "Chrome: waiting");
+				this.deps.setBrowserToolsActive?.(info !== undefined);
 				if (info) this.connected(info);
 			},
 		});

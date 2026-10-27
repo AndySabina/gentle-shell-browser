@@ -4,7 +4,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { askApproval } from "./approval.ts";
 import { BrowserController } from "./controller.ts";
 import { configDir } from "./token.ts";
-import { registerBrowserTools } from "./tools.ts";
+import { registerBrowserTools, setBrowserToolsActive } from "./tools.ts";
 
 function parsePort(value: string | undefined): number | undefined {
 	if (!value) return undefined;
@@ -95,6 +95,8 @@ export default function gentleChrome(pi: ExtensionAPI) {
 		abort: () => ctx?.abort(),
 		setStatus: (text) => ctx?.ui.setStatus("gentle-chrome", text),
 		notify: (text) => ctx?.ui.notify(text, "info"),
+		// The tools cost tokens on every turn: the model sees them only while Chrome is connected.
+		setBrowserToolsActive: (active) => setBrowserToolsActive(pi, active),
 		// The extension decided this step needs approval; the user answers here.
 		handlers: { approve: (params) => askApproval(ctx, params) },
 	});

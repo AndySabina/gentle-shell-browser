@@ -128,11 +128,13 @@ Just ask, for example: "open github.com and find the latest issue in my repo". T
 
 ### Tools the agent gets
 
+The agent sees these tools only while Chrome is connected to its session; until then they cost no tokens. `/browser status` works either way.
+
 | Tool | Does |
 |------|------|
 | `browser_tabs` | Lists the tabs in the group (id, title, URL). |
 | `browser_open` | Opens an http(s) URL in a new tab inside the group, creating the group if needed. |
-| `browser_snapshot` | Reads a tab: URL, title, visible text and interactive elements with refs (`e12`). |
+| `browser_snapshot` | Reads a tab: URL, title, text and interactive elements with refs (`e12`). By default only the viewport: up to 80 elements on screen, the visible text (up to 1500 characters), and a count of the elements outside it. `full: true` reads the whole page (up to 300 elements, offscreen ones included, and 6000 characters of text). |
 | `browser_screenshot` | Captures what a tab shows as a JPEG. Fails after 5 s on a background tab, which Chrome does not paint. |
 | `browser_click` | Clicks an element (ref or x/y), any button, single or double click. |
 | `browser_type` | Types into a field; can clear it first and press Enter after. |
