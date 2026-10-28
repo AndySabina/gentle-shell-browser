@@ -115,10 +115,14 @@ export class Debugger {
 	}
 
 	/**
-	 * Adds the bindings before our isolated world is created, so the world has them.
+	 * Makes the page behave as focused: with Chrome in the background (the user
+	 * away from the screen), clicks would not move the focus and typing would
+	 * reach nothing. Then adds the bindings before our isolated world is
+	 * created, so the world has them.
 	 * @param {number} tabId
 	 */
 	async install(tabId) {
+		await this.api.debugger.sendCommand({ tabId }, "Emulation.setFocusEmulationEnabled", { enabled: true });
 		if (this.bindings.size === 0) return;
 		await this.api.debugger.sendCommand({ tabId }, "Runtime.enable");
 		for (const name of this.bindings) await this.api.debugger.sendCommand({ tabId }, "Runtime.addBinding", { name, executionContextName: WORLD_NAME });

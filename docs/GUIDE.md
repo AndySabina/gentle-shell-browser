@@ -153,6 +153,8 @@ When the step needs your approval, the label changes and the cursor waits on the
 
 ![The same page with the cursor on the Subscribe button and the label "Waiting for your approval in Gentle Shell…"](images/overlay-waiting.png)
 
+The prompt appears in the terminal of the session that owns the tab, which may not be the pane you are looking at. The agent waits for your answer for up to 5 minutes. If the prompt is left unanswered, or you press Esc to interrupt the agent, the step is cancelled in Chrome: the prompt closes as a denial, and that session's queued steps fail rather than run later or hold up other steps.
+
 ### STOP
 
 | Where | What it stops |

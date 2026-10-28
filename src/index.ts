@@ -87,6 +87,17 @@ export async function rulesCommand(controller: CommandController, args: string[]
 
 export default function gentleChrome(pi: ExtensionAPI) {
 	let ctx: ExtensionContext | undefined;
+	/** Open approval prompts; a cancelled step closes them, as Deny. */
+	const prompts = new Set<AbortController>();
+	const approve = async (params: unknown) => {
+		const prompt = new AbortController();
+		prompts.add(prompt);
+		try {
+			return await askApproval(ctx, params, prompt.signal);
+		} finally {
+			prompts.delete(prompt);
+		}
+	};
 	const controller = new BrowserController({
 		configDir: configDir(process.env, homedir()),
 		// Unset: scan the session port range, so several sessions run side by side.
@@ -98,7 +109,7 @@ export default function gentleChrome(pi: ExtensionAPI) {
 		// The tools cost tokens on every turn: the model sees them only while Chrome is connected.
 		setBrowserToolsActive: (active) => setBrowserToolsActive(pi, active),
 		// The extension decided this step needs approval; the user answers here.
-		handlers: { approve: (params) => askApproval(ctx, params) },
+		handlers: { approve },
 	});
 
 	pi.on("session_start", async (_event, context) => {
@@ -109,7 +120,14 @@ export default function gentleChrome(pi: ExtensionAPI) {
 		await controller.stop();
 	});
 
-	registerBrowserTools(pi, (method, params) => controller.call(method, params));
+	registerBrowserTools(
+		pi,
+		(method, params, options) => controller.call(method, params, options),
+		async () => {
+			for (const prompt of prompts) prompt.abort();
+			await controller.call("cancel", {});
+		},
+	);
 
 	pi.registerCommand("browser", {
 		description: "Control your Chrome from this session: /browser [status | start | stop | update | level [always | remember | never] | rules [clear [site]]]",

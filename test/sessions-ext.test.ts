@@ -367,6 +367,15 @@ test("STOP on a page notifies only the session that owns the tab; popup STOP not
 	assert.deepEqual(connections.get(B.id)!.calls.map((c) => c.method), ["stop"]);
 });
 
+test("cancel from a session stops only that session's actions and notifies no session", async () => {
+	const { connections, manager, stops } = setup();
+	await manager.sync({ token: TOKEN, sessions: [A, B] });
+	assert.deepEqual(await connections.get(A.id)!.handlers.cancel({}), { cancelled: true });
+	assert.deepEqual(stops, [A.id]);
+	assert.deepEqual(connections.get(A.id)!.calls, []);
+	assert.deepEqual(connections.get(B.id)!.calls, []);
+});
+
 test("new tabs an action opens are decided by the opener's session group", async () => {
 	const { manager, connections } = setup();
 	await manager.sync({ token: TOKEN, sessions: [A, B] });

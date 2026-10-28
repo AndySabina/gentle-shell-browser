@@ -2,6 +2,7 @@
 // messaging host, keeps one connection and one tab group per session, and
 // answers the popup.
 
+import { BUILD } from "./build.js";
 import { Actions } from "./lib/actions.js";
 import { Debugger } from "./lib/cdp.js";
 import { Connection } from "./lib/connection.js";
@@ -15,17 +16,6 @@ const VERSION = chrome.runtime.getManifest().version;
 /** Time for the reload reply to reach Gentle Shell before the worker goes away. */
 const RELOAD_DELAY_MS = 200;
 
-/** The build id install-extension wrote in build.json; "unknown" for a copy made by hand. */
-async function readBuild() {
-	try {
-		const response = await fetch(chrome.runtime.getURL("build.json"));
-		const { build } = await response.json();
-		return typeof build === "string" && build ? build : "unknown";
-	} catch {
-		return "unknown";
-	}
-}
-const BUILD = readBuild();
 
 /**
  * The permission mode (stored as `level`) and saved decisions. Risky pages

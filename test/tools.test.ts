@@ -1,19 +1,26 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { BROWSER_TOOLS, registerBrowserTools, setBrowserToolsActive } from "../src/tools.ts";
+import { Unanswered } from "../extension/lib/rpc.js";
+import { ACT_TIMEOUT_MS, BROWSER_TOOLS, registerBrowserTools, setBrowserToolsActive } from "../src/tools.ts";
 
 type Call = (method: string, params: unknown) => Promise<unknown>;
 
-function setup(respond: Call) {
+function setup(respond: Call, cancel?: () => Promise<unknown>) {
 	const tools = new Map<string, any>();
 	const calls: { method: string; params: unknown }[] = [];
+	const options: unknown[] = [];
 	const pi = { registerTool: (tool: any) => tools.set(tool.name, tool) };
-	registerBrowserTools(pi as any, (method, params) => {
-		calls.push({ method, params });
-		return respond(method, params);
-	});
-	const run = (name: string, params: unknown) => tools.get(name).execute("call-1", params, undefined, undefined, {});
-	return { tools, calls, run };
+	registerBrowserTools(
+		pi as any,
+		(method, params, callOptions) => {
+			calls.push({ method, params });
+			options.push(callOptions);
+			return respond(method, params);
+		},
+		cancel,
+	);
+	const run = (name: string, params: unknown, signal?: AbortSignal) => tools.get(name).execute("call-1", params, signal, undefined, {});
+	return { tools, calls, options, run };
 }
 
 const SNAPSHOT = {
@@ -260,6 +267,65 @@ test("browser_act refuses a step that misses what its action needs, without call
 	}
 });
 
+test("browser_act waits as long as an approval may take and passes the tool's abort signal", async () => {
+	assert.equal(ACT_TIMEOUT_MS, 6 * 60_000);
+	const { options, run } = setup(answer());
+	const signal = new AbortController().signal;
+	await run("browser_act", { action: "click", tabId: 5, ref: "e1" }, signal);
+	assert.deepEqual(options, [{ timeoutMs: ACT_TIMEOUT_MS, signal }]);
+});
+
+test("the other tools keep the default wait", async () => {
+	const { options, run } = setup(answer(SNAPSHOT));
+	await run("browser_snapshot", { tabId: 5 });
+	assert.deepEqual(options, [undefined]);
+});
+
+test("a step left unanswered is cancelled in Chrome once and fails with the exact message", async () => {
+	let cancels = 0;
+	const { calls, run } = setup(
+		async () => {
+			throw new Unanswered("Timed out waiting for type");
+		},
+		async () => {
+			cancels++;
+		},
+	);
+	await assert.rejects(run("browser_act", { action: "type", tabId: 5, text: "x" }), {
+		message: "Timed out waiting for type. Chrome cancelled the step; do not retry it unless the user asks.",
+	});
+	assert.equal(cancels, 1);
+	assert.deepEqual(calls.map((c) => c.method), ["type"]);
+});
+
+test("without a cancel hook an unanswered step sends cancel to the extension; a failing cancel keeps the step's error", async () => {
+	const { calls, run } = setup(async (method) => {
+		if (method === "cancel") throw new Error("Unknown method: cancel");
+		throw new Unanswered("Cancelled waiting for navigate");
+	});
+	await assert.rejects(run("browser_act", { action: "navigate", tabId: 5, url: "https://example.org/" }), {
+		message: "Cancelled waiting for navigate. Chrome cancelled the step; do not retry it unless the user asks.",
+	});
+	assert.deepEqual(calls.map((c) => [c.method, c.params]), [
+		["navigate", { tabId: 5, url: "https://example.org/" }],
+		["cancel", {}],
+	]);
+});
+
+test("an error the extension answered is not cancelled and keeps its message", async () => {
+	let cancels = 0;
+	const { run } = setup(
+		async () => {
+			throw new Error("The user did not approve: click");
+		},
+		async () => {
+			cancels++;
+		},
+	);
+	await assert.rejects(run("browser_act", { action: "click", tabId: 5, ref: "e1" }), { message: "The user did not approve: click" });
+	assert.equal(cancels, 0);
+});
+
 test("errors from the extension surface as thrown errors", async () => {
 	const message = "Tab 7 is not in the Gentle Shell group. Ask the user to drag it into the group.";
 	const { run } = setup(async () => {
@@ -308,6 +374,12 @@ test("browser_act results say what happened, and where the tab is only when the 
 	assert.equal(await run({ action: "type", tabId: 5, ref: "e2", text: "secret", submit: true }), "Typed 6 characters into element e2 and pressed Enter in tab 5.");
 	assert.equal(await run({ action: "type", tabId: 5, text: "h" }), "Typed 1 character into the focused element in tab 5.");
 	assert.equal(await run({ action: "key", tabId: 5, key: "Enter" }), "Pressed Enter in tab 5.");
+	const typed = (result: unknown) => setup(answer(result)).run("browser_act", { action: "type", tabId: 5, ref: "e2", text: "hi" }).then((r: any) => r.content[0].text);
+	assert.equal(await typed({ ...PAGE, verified: true }), "Typed 2 characters into element e2 in tab 5.\nThe field's value changed.");
+	assert.equal(
+		await typed({ ...PAGE, unverified: "the page check failed: boom" }),
+		"Typed 2 characters into element e2 in tab 5.\nNot verified (the page check failed: boom): check the field with browser_snapshot.",
+	);
 	assert.equal(await run({ action: "scroll", tabId: 5, deltaY: 600 }), "Scrolled by (0, 600) in tab 5.");
 	assert.equal(await run({ action: "open", url: "https://example.com/" }), "Opened https://example.com/ in tab 9 of the Gentle Shell group.");
 	const details = await same.run("browser_act", { action: "click", tabId: 5, ref: "e1" });

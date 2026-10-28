@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { Actions, elementFactsExpression, hitTestExpression } from "../extension/lib/actions.js";
+import { Actions, elementFactsExpression, focusedValueExpression, hitTestExpression } from "../extension/lib/actions.js";
 import { Debugger } from "../extension/lib/cdp.js";
 import { pageInfoExpression, pageRiskExpression, resolveRefExpression } from "../extension/lib/page.js";
 import { DEFAULT_RISKY_DOMAINS } from "../extension/lib/policy.js";
@@ -34,6 +34,8 @@ interface SetupOptions {
 	signals?: unknown;
 	/** Saved decisions; saving one updates this object. */
 	rules?: Record<string, Record<string, string>>;
+	/** Answers of the focused field probe, in order; null (unreadable) when missing; an Error makes the probe throw. */
+	values?: unknown[];
 }
 
 const harmlessPage = { fields: [], submits: ["Next"], frames: [], headings: ["Results"] };
@@ -64,6 +66,11 @@ function setup(options: SetupOptions = {}) {
 				return { ...page };
 			}
 			// Not logged: the exact step order of the other tests stays as it was.
+			if (expression === focusedValueExpression()) {
+				const found = options.values?.shift() ?? null;
+				if (found instanceof Error) throw found;
+				return found;
+			}
 			if (expression === pageRiskExpression()) {
 				probes.push(page.url);
 				const found = "signals" in options ? options.signals : harmlessPage;
@@ -229,7 +236,45 @@ test("type with clear and submit clicks the field, then select-all, insertText a
 		["Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, modifiers: 0, text: "\r", unmodifiedText: "\r" }],
 		["Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, modifiers: 0 }],
 	]);
-	assert.deepEqual(result, { url: "https://example.com/", title: "Example", urlChanged: false });
+	assert.deepEqual(result, { url: "https://example.com/", title: "Example", urlChanged: false, unverified: "the focused element is not a text field the page can read" });
+});
+
+test("typing that leaves the focused field's value unchanged fails with the exact message and does not press Enter", async () => {
+	const { actions, input } = setup({ values: [{ value: "old" }, { value: "old" }] });
+	await assert.rejects(actions.type({ tabId: TAB, ref: "e2", text: "hello", submit: true }), {
+		message: 'The text did not reach "Save": the field\'s value did not change. Take a new browser_snapshot and pass the field\'s ref.',
+	});
+	assert.deepEqual(input().map((entry) => entry.method).filter((method) => method !== "Input.dispatchMouseEvent"), ["Input.insertText"]);
+});
+
+test("typing with no field focused fails with the exact message", async () => {
+	const { actions } = setup({ values: [{ none: true }, { none: true }] });
+	await assert.rejects(actions.type({ tabId: TAB, text: "hello" }), {
+		message: "No field has the focus, so nothing was typed. Pass the field's ref from a new browser_snapshot.",
+	});
+});
+
+test("typing that changes the field's value reports it as verified", async () => {
+	const { actions } = setup({ values: [{ value: "" }, { value: "hello" }] });
+	assert.deepEqual(await actions.type({ tabId: TAB, ref: "e2", text: "hello" }), { url: "https://example.com/", title: "Example", urlChanged: false, verified: true });
+});
+
+test("typing into a field that cannot be read goes ahead and says why it could not be verified", async () => {
+	const NOT_TEXT = "the focused element is not a text field the page can read";
+	const cases: [unknown[], string][] = [
+		[[null, null], NOT_TEXT],
+		[[{ value: "x" }, null], NOT_TEXT],
+		[[new Error("Right-hand side of 'instanceof' is not an object"), new Error("Right-hand side of 'instanceof' is not an object")], "the page check failed: Right-hand side of 'instanceof' is not an object"],
+	];
+	for (const [values, reason] of cases) {
+		const { actions } = setup({ values });
+		assert.deepEqual(await actions.type({ tabId: TAB, ref: "e2", text: "hello" }), { url: "https://example.com/", title: "Example", urlChanged: false, unverified: reason }, reason);
+	}
+});
+
+test("clearing a field with empty text is not checked", async () => {
+	const { actions } = setup({ values: [{ value: "" }, { value: "" }] });
+	assert.deepEqual(await actions.type({ tabId: TAB, ref: "e2", text: "", clear: true }), { url: "https://example.com/", title: "Example", urlChanged: false });
 });
 
 test("key presses the mapped key with a label", async () => {
@@ -508,6 +553,31 @@ test("the debugger refuses to attach, or attach again, a tab outside the group",
 	for (const listener of detachListeners) listener({ tabId: 1 });
 	await assert.rejects(cdp.send(1, "Input.dispatchMouseEvent", {}), { message: "Tab 1 is not in the Gentle Shell group; the debugger was not attached." });
 	assert.deepEqual(attached, [1]);
+});
+
+test("attaching makes the page behave as focused, so clicks focus fields while Chrome is in the background", async () => {
+	const commands: [number, string, unknown][] = [];
+	const api: any = {
+		debugger: {
+			attach: async () => {},
+			detach: async () => {},
+			sendCommand: async ({ tabId }: { tabId: number }, method: string, params?: unknown) => {
+				commands.push([tabId, method, params]);
+				return {};
+			},
+			onDetach: { addListener: () => {} },
+			onEvent: { addListener: () => {} },
+		},
+		tabs: { onRemoved: { addListener: () => {} } },
+	};
+	const cdp = new Debugger(api, { canAttach: async () => true });
+	await cdp.send(1, "Page.enable");
+	await cdp.send(1, "Page.reload");
+	assert.deepEqual(commands, [
+		[1, "Emulation.setFocusEmulationEnabled", { enabled: true }],
+		[1, "Page.enable", undefined],
+		[1, "Page.reload", undefined],
+	]);
 });
 
 // F4: the element under the cursor must still be the target right before pressing.

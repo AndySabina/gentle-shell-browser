@@ -27,7 +27,7 @@ export type Handler = (params: unknown) => unknown;
 
 export interface ExtensionInfo {
 	version: string;
-	/** Content hash of the extension's files, from its build.json; "unknown" when it has none. */
+	/** Content hash of the extension's files its running code was installed with (build.js); "unknown" when it has none. */
 	build: string;
 }
 

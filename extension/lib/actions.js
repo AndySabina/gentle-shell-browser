@@ -171,6 +171,27 @@ export function hitTestExpression(at) {
 }
 
 /**
+ * Runs inside the page. Self-contained: serialized with `.toString()`.
+ * What typing reaches: `{value}` of the focused text field or editable
+ * element (through open shadow roots), `{none: true}` when no element has the
+ * focus, and null when the focus is somewhere the page cannot read (a frame,
+ * a closed shadow root, a non-text control).
+ */
+function focusedValue() {
+	let active = document.activeElement;
+	while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+	if (!active || active === document.body || active === document.documentElement) return { none: true };
+	if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) return { value: active.value };
+	if (active instanceof HTMLElement && active.isContentEditable) return { value: active.innerText };
+	return null;
+}
+
+/** Expression for Debugger.evaluate: what focusedValue returns. */
+export function focusedValueExpression() {
+	return `(${focusedValue.toString()})()`;
+}
+
+/**
  * Validates a URL Gentle Shell wants to open.
  * @param {unknown} value
  */
@@ -286,9 +307,21 @@ export class Actions {
 					await this.keyPress(run, tabId, SELECT_ALL, ["selectAll"]);
 					if (!text) await this.keyPress(run, tabId, keyEvent("Backspace"));
 				}
-				if (text) await this.input(run, tabId, "Input.insertText", { text });
+				/** @type {{verified: true} | {unverified: string} | {}} */
+				let check = {};
+				if (text) {
+					const was = await this.focused(run, tabId);
+					await this.input(run, tabId, "Input.insertText", { text });
+					const now = await this.focused(run, tabId);
+					if (was.none && now.none) throw new Error("No field has the focus, so nothing was typed. Pass the field's ref from a new browser_snapshot.");
+					const unreadable = was.unreadable ?? now.unreadable;
+					if (unreadable) check = { unverified: unreadable };
+					else if (was.value === now.value) {
+						throw new Error(`The text did not reach ${into}: the field's value did not change. Take a new browser_snapshot and pass the field's ref.`);
+					} else check = { verified: true };
+				}
 				if (submit) await this.keyPress(run, tabId, keyEvent("Enter"));
-				return this.settle(run, tabId, before);
+				return { ...(await this.settle(run, tabId, before)), ...check };
 			});
 		}, scope);
 	}
@@ -495,6 +528,20 @@ export class Actions {
 		const value = await Promise.race([promise, run.stopped]);
 		if (!run.active) throw new Error(STOPPED);
 		return value;
+	}
+
+	/**
+	 * What typing reaches in the tab (see focusedValue); `unreadable` says why it could not be read.
+	 * @param {Run} run
+	 * @param {number} tabId
+	 * @returns {Promise<{value?: string, none?: boolean, unreadable?: string}>}
+	 */
+	async focused(run, tabId) {
+		const found = await this.step(
+			run,
+			this.cdp.evaluate(tabId, focusedValueExpression()).catch((error) => ({ unreadable: `the page check failed: ${error instanceof Error ? error.message : String(error)}` })),
+		);
+		return found && typeof found === "object" ? found : { unreadable: "the focused element is not a text field the page can read" };
 	}
 
 	/**

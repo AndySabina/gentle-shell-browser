@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { Peer } from "../extension/lib/rpc.js";
+import { Peer, Unanswered } from "../extension/lib/rpc.js";
 
 /** Two peers wired back to back, delivering messages asynchronously like a socket. */
 function pair() {
@@ -30,7 +30,34 @@ test("an unknown method rejects the call", async () => {
 
 test("a call times out when no answer arrives", async () => {
 	const a = new Peer(() => {});
-	await assert.rejects(a.call("slow", {}, { timeoutMs: 20 }), { message: "Timed out waiting for slow" });
+	await assert.rejects(a.call("slow", {}, { timeoutMs: 20 }), (error) => error instanceof Unanswered && error.message === "Timed out waiting for slow");
+});
+
+test("an aborted signal rejects the call as unanswered and a late answer is ignored", async () => {
+	const sent: string[] = [];
+	const a = new Peer((text: string) => sent.push(text));
+	const controller = new AbortController();
+	const pending = a.call("slow", {}, { signal: controller.signal });
+	controller.abort();
+	await assert.rejects(pending, (error) => error instanceof Unanswered && error.message === "Cancelled waiting for slow");
+	assert.equal(a.pending.size, 0);
+	a.receive(JSON.stringify({ kind: "res", id: 1, ok: true, result: "late" }));
+	assert.equal(sent.length, 1);
+});
+
+test("an already aborted signal rejects without sending", async () => {
+	const sent: string[] = [];
+	const a = new Peer((text: string) => sent.push(text));
+	await assert.rejects(a.call("slow", {}, { signal: AbortSignal.abort() }), (error) => error instanceof Unanswered && error.message === "Cancelled waiting for slow");
+	assert.deepEqual(sent, []);
+});
+
+test("an answer or a remote error is not unanswered", async () => {
+	const { a, b } = pair();
+	b.handle("fail", () => {
+		throw new Error("boom");
+	});
+	await assert.rejects(a.call("fail", {}), (error) => error instanceof Error && !(error instanceof Unanswered) && error.message === "boom");
 });
 
 test("close rejects every pending call", async () => {

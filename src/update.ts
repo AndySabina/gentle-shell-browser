@@ -22,6 +22,8 @@ export const NAME = "Gentle Shell Browser";
 /** The extension/ folder of this checkout. */
 export const REPO_EXTENSION_DIR = fileURLToPath(new URL("../extension", import.meta.url));
 const BUILD_FILE = "build.json";
+/** The worker imports its build from here, so a worker Chrome kept from an older copy reports that copy's build. */
+const BUILD_MODULE = "build.js";
 const TARGET_FILE = "extension-target";
 const HOST_MANIFEST = `${HOST_NAME}.json`;
 const HOST_BAT = "gentle-shell-host.bat";
@@ -36,11 +38,16 @@ function files(dir: string): string[] {
 	return entries
 		.filter((entry) => entry.isFile())
 		.map((entry) => relative(dir, join(entry.parentPath, entry.name)).split(sep).join("/"))
-		.filter((path) => path !== BUILD_FILE)
+		.filter((path) => path !== BUILD_FILE && path !== BUILD_MODULE)
 		.sort();
 }
 
-/** First 16 hex characters of a sha256 over every file's path and bytes; build.json does not count. */
+/** The build.js install writes: part of the worker's code, unlike build.json. */
+export function buildModule(build: string): string {
+	return `// Written by install; the build this copy's code belongs to.\nexport const BUILD = ${JSON.stringify(build)};\n`;
+}
+
+/** First 16 hex characters of a sha256 over every file's path and bytes; build.json and build.js do not count. */
 export function buildId(extensionDir: string): string {
 	const hash = createHash("sha256");
 	for (const path of files(extensionDir)) {
@@ -161,7 +168,7 @@ function checkTarget(sourceDir: string, targetDir: string): void {
 
 /**
  * Copies `sourceDir` into `targetDir` (overwriting, never deleting), writes
- * build.json, records `targetDir` for automatic updates, writes the native
+ * build.json and build.js, records `targetDir` for automatic updates, writes the native
  * host into `<targetDir>-host` and registers it when the registry differs.
  */
 export function installExtension(options: { sourceDir: string; targetDir: string; configDir: string; deps?: InstallDeps }): {
@@ -177,9 +184,10 @@ export function installExtension(options: { sourceDir: string; targetDir: string
 	checkHostDir(hostDir);
 	const build = buildId(options.sourceDir);
 	mkdirSync(targetDir, { recursive: true });
-	const sourceBuild = join(resolve(options.sourceDir), BUILD_FILE);
-	cpSync(options.sourceDir, targetDir, { recursive: true, force: true, filter: (path) => resolve(path) !== sourceBuild });
+	const generated = new Set([BUILD_FILE, BUILD_MODULE].map((name) => join(resolve(options.sourceDir), name)));
+	cpSync(options.sourceDir, targetDir, { recursive: true, force: true, filter: (path) => !generated.has(resolve(path)) });
 	writeFileSync(join(targetDir, BUILD_FILE), `${JSON.stringify({ build })}\n`);
+	writeFileSync(join(targetDir, BUILD_MODULE), buildModule(build));
 	mkdirSync(options.configDir, { recursive: true, mode: 0o700 });
 	const record = join(options.configDir, TARGET_FILE);
 	writeFileSync(record, `${targetDir}\n`, { mode: 0o600 });

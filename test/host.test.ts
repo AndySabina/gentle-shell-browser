@@ -103,9 +103,9 @@ test("nativeHostFiles builds the Chrome host manifest and a CRLF batch file with
 			type: "stdio",
 			allowed_origins: ["chrome-extension://abcdefghijklmnopabcdefghijklmnop/"],
 		},
-		bat: '@echo off\r\nwsl.exe -d Ubuntu -e "/usr/bin/node" "/home/me/chrome/src/host.ts"\r\n',
+		bat: '@echo off\r\n%SystemRoot%\\System32\\wsl.exe -d Ubuntu -e "/usr/bin/node" "/home/me/chrome/src/host.ts"\r\n',
 	});
-	assert.equal(nativeHostFiles({ ...options, distro: "" }).bat, '@echo off\r\nwsl.exe -e "/usr/bin/node" "/home/me/chrome/src/host.ts"\r\n');
+	assert.equal(nativeHostFiles({ ...options, distro: "" }).bat, '@echo off\r\n%SystemRoot%\\System32\\wsl.exe -e "/usr/bin/node" "/home/me/chrome/src/host.ts"\r\n');
 	// wsl.exe keeps quotes in the -d value, so the name goes unquoted and must be a plain distro name.
 	assert.throws(() => nativeHostFiles({ ...options, distro: 'Ubuntu" & calc' }), { message: 'Invalid WSL distribution name: Ubuntu" & calc' });
 	// The paths go into a batch file: quotes, variables, line breaks and cmd operators would change what it runs.

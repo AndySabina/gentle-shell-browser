@@ -1,8 +1,16 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { Unanswered } from "../extension/lib/rpc.js";
 
 /** Sends one request to the Chrome extension, such as the controller's `call`. */
-export type BrowserCall = (method: string, params: unknown) => Promise<unknown>;
+export type BrowserCall = (method: string, params: unknown, options?: { timeoutMs?: number; signal?: AbortSignal }) => Promise<unknown>;
+
+/**
+ * How long browser_act waits: the extension waits up to 5 minutes for the
+ * user's approval, plus time for the step and its page load. A shorter wait
+ * would give up while the approval prompt is still open.
+ */
+export const ACT_TIMEOUT_MS = 6 * 60_000;
 
 interface GroupTab {
 	tabId: number;
@@ -61,6 +69,10 @@ interface ActionResult {
 	unguardedNavigation?: { url: string };
 	/** Set when the action loaded a page that looks sensitive. */
 	risk?: Risk;
+	/** type only: the focused field's value changed. */
+	verified?: boolean;
+	/** type only: why the field's value could not be checked. */
+	unverified?: string;
 }
 
 // Descriptions are sent on every turn: keep them short. Each fact is stated
@@ -182,6 +194,8 @@ function doneLine(params: ActParams): string {
 /** The result of a step: where the tab is only when it moved; a document load always moves it. */
 function actText(params: ActParams, result: ActionResult, loaded: boolean): string {
 	const lines = [doneLine(params)];
+	if (result.verified === true) lines.push("The field's value changed.");
+	if (typeof result.unverified === "string") lines.push(`Not verified (${result.unverified}): check the field with browser_snapshot.`);
 	if (loaded || result.urlChanged) lines.push(pageLine(result), ...riskLines(result), SNAPSHOT_AGAIN);
 	lines.push(...unguardedLine(result));
 	for (const tab of result.newTabs ?? []) {
@@ -242,7 +256,7 @@ const tabIdField = Type.Integer();
  * Every tool runs sequentially: one browser step at a time, in the order the model asked.
  * None is active at first: the controller shows them while Chrome is connected (setBrowserToolsActive).
  */
-export function registerBrowserTools(pi: Pick<ExtensionAPI, "registerTool">, call: BrowserCall): void {
+export function registerBrowserTools(pi: Pick<ExtensionAPI, "registerTool">, call: BrowserCall, cancel: () => Promise<unknown> = () => call("cancel", {})): void {
 	pi.registerTool({
 		name: "browser_tabs",
 		label: "Browser tabs",
@@ -294,9 +308,18 @@ export function registerBrowserTools(pi: Pick<ExtensionAPI, "registerTool">, cal
 			// The extension forwards only `true`: the model can add an approval, never remove one.
 			risky: Type.Optional(Type.Boolean({ description: "Sensitive step (money, messages, account, irreversible)." })),
 		}),
-		async execute(_id, params) {
+		async execute(_id, params, signal) {
 			const request = actRequest(params);
-			const result = (await call(request.method, request.params)) as ActionResult | OpenedTab;
+			let result: ActionResult | OpenedTab;
+			try {
+				result = (await call(request.method, request.params, { timeoutMs: ACT_TIMEOUT_MS, signal })) as ActionResult | OpenedTab;
+			} catch (error) {
+				if (!(error instanceof Unanswered)) throw error;
+				// Chrome may still be running the step, or waiting for an approval:
+				// cancel it so it neither acts later nor holds up the steps after it.
+				await cancel().catch(() => {});
+				throw new Error(`${error.message}. Chrome cancelled the step; do not retry it unless the user asks.`);
+			}
 			const text =
 				"groupId" in result
 					? `Opened ${params.url} in tab ${result.tabId} of the Gentle Shell group.`

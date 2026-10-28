@@ -8,6 +8,9 @@
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
+/** A call that ended without an answer: it timed out or its signal aborted. The other side may still be working on it. */
+export class Unanswered extends Error {}
+
 export class Peer {
 	/** @param {(text: string) => void} send */
 	constructor(send) {
@@ -30,21 +33,36 @@ export class Peer {
 	/**
 	 * @param {string} method
 	 * @param {unknown} params
-	 * @param {{timeoutMs?: number}} [options]
+	 * @param {{timeoutMs?: number, signal?: AbortSignal}} [options]
 	 * @returns {Promise<any>}
 	 */
 	call(method, params, options = {}) {
+		const { signal } = options;
+		if (signal?.aborted) return Promise.reject(new Unanswered(`Cancelled waiting for ${method}`));
 		const id = this.nextId++;
 		const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 		return new Promise((resolve, reject) => {
-			const timer = setTimeout(() => {
+			const onAbort = () => {
+				clearTimeout(timer);
 				this.pending.delete(id);
-				reject(new Error(`Timed out waiting for ${method}`));
+				reject(new Unanswered(`Cancelled waiting for ${method}`));
+			};
+			const done = () => signal?.removeEventListener("abort", onAbort);
+			const timer = setTimeout(() => {
+				done();
+				this.pending.delete(id);
+				reject(new Unanswered(`Timed out waiting for ${method}`));
 			}, timeoutMs);
-			this.pending.set(id, { resolve, reject, timer });
+			signal?.addEventListener("abort", onAbort, { once: true });
+			this.pending.set(id, {
+				resolve: (value) => (done(), resolve(value)),
+				reject: (error) => (done(), reject(error)),
+				timer,
+			});
 			try {
 				this.send(JSON.stringify({ kind: "req", id, method, params }));
 			} catch (error) {
+				done();
 				clearTimeout(timer);
 				this.pending.delete(id);
 				reject(error instanceof Error ? error : new Error(String(error)));

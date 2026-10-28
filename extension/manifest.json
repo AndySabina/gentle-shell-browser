@@ -1,7 +1,7 @@
 {
 	"manifest_version": 3,
 	"name": "Gentle Shell Browser",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "Lets your Gentle Shell session work in Chrome, only inside its own tab group, with a visible cursor and your approval for risky steps.",
 	"minimum_chrome_version": "120",
 	"key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAjV5tbFE3/7fnkyEuCLtx4z7Fex71XaVRejoHeHJKwPoFU1gN9jtU37ex9LOVS6UHWvvAZs6k97xdV3BEgc7roGKI8DnEcsgYClbUHyoiF6AX+MuttPb6N01epHG9xSMSbR8gcgZx/I46UwfIyKjkLbvqGb6JPRorPIfFHJMRCRyOMqvlI26zmQlcTMfmRyqPP6Dka420MgLpUPUImr8XmMfUdk6mJEnuDw+qs7gVxGYMwodkhraFIORinhG82ZObt/q7gDcCUQAP7nbd/0ZdSs2rrc3rDXAMUK0ps86/72LlohKzGcU3on4vEeKWdhQGRCBRpnSwy3sft5EMh4Y4YQIDAQAB",

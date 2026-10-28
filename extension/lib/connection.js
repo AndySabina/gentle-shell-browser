@@ -1,6 +1,6 @@
 // The extension side of the bridge: connects to one Gentle Shell session,
 // authenticates with the shared token from the native messaging host, and
-// reconnects while open.
+// reconnects while open (a replaced connection only at the next ensure).
 // The token never leaves the extension: the session first proves it knows the
 // token (an HMAC over both nonces and its session id), then the extension
 // proves it the same way. A listener that cannot prove it, or that names
@@ -169,16 +169,15 @@ export class Connection {
 				this.pairing = undefined;
 				return this.setState("unauthorized");
 			}
-			if (event.code === CLOSE_REPLACED) {
-				this.pairing = undefined;
-				return this.setState("replaced");
-			}
+			// Another client took the session: no retry of our own, so two clients
+			// do not replace each other in a loop; the next ensure() takes it back.
+			if (event.code === CLOSE_REPLACED) return this.setState("replaced");
 			this.scheduleRetry();
 		};
 		socket.onerror = () => {};
 	}
 
-	/** The build id from build.json, or "unknown". */
+	/** The build id from build.js (the build this code was installed with), or "unknown". */
 	async build() {
 		try {
 			const build = typeof this.deps.build === "function" ? await this.deps.build() : this.deps.build;

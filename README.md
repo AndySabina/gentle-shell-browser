@@ -87,7 +87,7 @@ Then, once, in Chrome: `chrome://extensions` → turn on **Developer mode** → 
 
 The script refuses a non-empty folder that is not a previous copy (no `manifest.json` named "Gentle Shell Browser"), never deletes anything, and only writes inside the target.
 
-**Updates are automatic.** The script stamps the copy with `build.json` (a hash of the extension's files) and records the folder in `~/.config/gentle-chrome/extension-target`. Whenever the extension connects with another build than your checkout's, Gentle Shell copies the new files into that folder and asks the extension to reload itself as soon as no action is running (it retries every 30 seconds, up to 10 times). `/browser update` does the same on demand.
+**Updates are automatic.** The script stamps the copy with `build.json` and `build.js` (a hash of the extension's files) and records the folder in `~/.config/gentle-chrome/extension-target`. Whenever the extension connects with another build than your checkout's, Gentle Shell copies the new files into that folder and asks the extension to reload itself as soon as no action is running (it retries every 30 seconds, up to 10 times). `/browser update` does the same on demand. The extension reports the build from `build.js`, which is part of its code: Chrome keeps running the code it cached until the extension reloads, even across browser restarts, so a stale copy reports its old build and gets reloaded.
 
 An extension loaded before self-update existed cannot reload itself: Gentle Shell copies the files and asks you to press the reload icon on the Gentle Shell Browser card in `chrome://extensions` once. After that it updates itself.
 
@@ -134,7 +134,7 @@ The agent sees these tools only while Chrome is connected to its session; until 
 |------|------|
 | `browser_tabs` | Lists the tabs in the group (id, title, URL). |
 | `browser_snapshot` | Reads a tab: URL, title, text and interactive elements as `[ref] role "name"` with only the flags that matter (`type=`, `value=`, `checked`, `disabled`). By default only the viewport: up to 80 elements on screen, the visible text (up to 1500 characters), and a count of the elements outside it. `full: true` reads the whole page (up to 300 elements, offscreen ones included, and 6000 characters of text). `details: true` adds each link's address (shortened: path and query on the same site, host and path elsewhere, 80 characters at most) and each element's center. The text leaves out what the listed elements already name. |
-| `browser_act` | One step in a group tab, chosen by `action`: `click` (ref or x/y, any button, single or double click), `type` (into a field; can clear it first and press Enter after), `key` (`Enter`, `Control+a`, `Shift+Tab`…), `scroll` (mouse wheel at an element, a point or the viewport center), `navigate` (load a URL), `back`, `forward`, `reload`, and `open` (an http(s) URL in a new tab inside the group, creating the group if needed; needs no `tabId`). A step missing what its action needs is refused before anything reaches Chrome. The result says what happened, and the tab's title and URL only when the URL changed (always after a page load). |
+| `browser_act` | One step in a group tab, chosen by `action`: `click` (ref or x/y, any button, single or double click), `type` (into a field; can clear it first and press Enter after; fails, without pressing Enter, when no field has the focus or the field's value did not change; otherwise the result says whether the value changed, or why it could not be checked), `key` (`Enter`, `Control+a`, `Shift+Tab`…), `scroll` (mouse wheel at an element, a point or the viewport center), `navigate` (load a URL), `back`, `forward`, `reload`, and `open` (an http(s) URL in a new tab inside the group, creating the group if needed; needs no `tabId`). A step missing what its action needs is refused before anything reaches Chrome. The result says what happened, and the tab's title and URL only when the URL changed (always after a page load). |
 | `browser_screenshot` | Captures what a tab shows as a JPEG, at most 1024 pixels wide. Fails after 5 s on a background tab, which Chrome does not paint. |
 
 ### Environment variables
@@ -261,7 +261,7 @@ The popup and the on-page cursor, highlight, label and STOP banner follow the [G
 - **Detectable by anti-bot sites.** Attaching the debugger enables `Runtime`, which some sites detect.
 - **Up to 100 sessions** (ports 48733–48832) at the same time.
 - **Chrome restart.** Group ids change; a restored group with the session's title is adopted by its title. If Chrome does not restore it, the next `open` step creates a new one. A group whose session ended while the extension was not running is renamed "(ended)" at the next discovery.
-- **The helper starts WSL.** Each discovery runs the helper through `wsl.exe`, which takes a moment; the popup may show `Looking for Gentle Shell…` briefly.
+- **The helper starts WSL.** Each discovery runs the helper through `%SystemRoot%\System32\wsl.exe` (a full path, so it works even when Chrome was started without System32 on its PATH), which takes a moment; the popup may show `Looking for Gentle Shell…` briefly.
 - **A held new tab** whose web address does not show within 3 seconds (for example a blank `window.open`) is asked for in Remember my decisions even with saved allows: it has no site yet.
 
 ## Troubleshooting
@@ -272,7 +272,7 @@ The popup and the on-page cursor, highlight, label and STOP banner follow the [G
 | Popup says **Gentle Shell helper sent an invalid reply** | The helper and the extension come from different checkouts: run `scripts/install-extension.sh` again. |
 | A session never connects (**untrusted**) | The listener on its port could not prove it knows the token: another program took the port. Turn the popup switch Off and On; restart that Gentle Shell session if it persists. |
 | No sessions listed, or a session stays **waiting** | Check `/browser status` in that session; run `/browser start`. A `GENTLE_CHROME_PORT` outside 48733–48832 is never connected. |
-| A session disconnects (**replaced**) | Another Chrome profile or window with the extension took that session. Turn the switch Off and On to take it back. |
+| A session disconnects (**replaced**) | Another Chrome profile or window with the extension took that session. It reconnects at the next session check (within 30 seconds), taking the session back; turn the switch Off and On to take it back now. |
 | "Tab N is not in the Gentle Shell group" | Drag the tab into this session's group, or ask the agent to open a page (`browser_act` with `open`). |
 | Every step is denied | Check the terminal for the prompt; answers time out after 5 minutes. |
 | A step is denied without a prompt ("saved rule: deny …") | You saved Always deny for that site and kind: `/browser rules` lists it; `/browser rules clear <site>` or the popup removes it. |

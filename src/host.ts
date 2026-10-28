@@ -78,7 +78,8 @@ export function nativeHostFiles(options: { nodePath: string; hostScript: string;
 			type: "stdio",
 			allowed_origins: [`chrome-extension://${options.extensionId}/`],
 		},
-		bat: `@echo off\r\nwsl.exe ${distro}-e "${options.nodePath}" "${options.hostScript}"\r\n`,
+		// Full path: Chrome started from WSL may hand the host a PATH without System32.
+		bat: `@echo off\r\n%SystemRoot%\\System32\\wsl.exe ${distro}-e "${options.nodePath}" "${options.hostScript}"\r\n`,
 	};
 }
 

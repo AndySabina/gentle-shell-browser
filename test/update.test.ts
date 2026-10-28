@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { EXTENSION_ID } from "../src/host.ts";
-import { buildId, installExtension, recordedTarget } from "../src/update.ts";
+import { buildId, installExtension, REPO_EXTENSION_DIR, recordedTarget } from "../src/update.ts";
 
 function scratch(): string {
 	return mkdtempSync(join(tmpdir(), "gentle-chrome-update-"));
@@ -27,10 +27,11 @@ test("buildId is a 16-character hex hash, the same for the same files", () => {
 	assert.equal(buildId(dir), id);
 });
 
-test("buildId changes when a file changes or is renamed, and ignores build.json", () => {
+test("buildId changes when a file changes or is renamed, and ignores build.json and build.js", () => {
 	const dir = source();
 	const id = buildId(dir);
 	writeFileSync(join(dir, "build.json"), '{"build":"x"}');
+	writeFileSync(join(dir, "build.js"), 'export const BUILD = "x";\n');
 	assert.equal(buildId(dir), id);
 	writeFileSync(join(dir, "lib", "rpc.js"), "export {}; \n");
 	const changed = buildId(dir);
@@ -48,6 +49,8 @@ test("installExtension copies the files, writes build.json and records the targe
 	assert.equal(readFileSync(join(targetDir, "lib", "rpc.js"), "utf8"), "export {};\n");
 	assert.equal(readFileSync(join(targetDir, "background.js"), "utf8"), "// worker\n");
 	assert.deepEqual(JSON.parse(readFileSync(join(targetDir, "build.json"), "utf8")), { build: result.build });
+	// Part of the worker's code: a worker Chrome kept from an older copy reports that copy's build.
+	assert.equal(readFileSync(join(targetDir, "build.js"), "utf8"), `// Written by install; the build this copy's code belongs to.\nexport const BUILD = "${result.build}";\n`);
 	const record = join(configDir, "extension-target");
 	assert.equal(readFileSync(record, "utf8"), `${targetDir}\n`);
 	assert.equal(statSync(record).mode & 0o777, 0o600);
@@ -65,6 +68,7 @@ test("installExtension updates a previous copy without deleting its other files"
 	assert.equal(readFileSync(join(targetDir, "background.js"), "utf8"), "// new worker\n");
 	assert.equal(readFileSync(join(targetDir, "old.js"), "utf8"), "kept");
 	assert.deepEqual(JSON.parse(readFileSync(join(targetDir, "build.json"), "utf8")), { build });
+	assert.equal(readFileSync(join(targetDir, "build.js"), "utf8"), `// Written by install; the build this copy's code belongs to.\nexport const BUILD = "${build}";\n`);
 });
 
 test("installExtension refuses a non-empty folder that is not a previous copy and leaves it untouched", () => {
@@ -126,7 +130,7 @@ test("installExtension writes the native host files next to the target and regis
 		allowed_origins: [`chrome-extension://${EXTENSION_ID}/`],
 	};
 	assert.equal(readFileSync(join(hostDir, "dev.gentle.shell.json"), "utf8"), `${JSON.stringify(manifest, null, 2)}\n`);
-	assert.equal(readFileSync(join(hostDir, "gentle-shell-host.bat"), "utf8"), '@echo off\r\nwsl.exe -d Ubuntu -e "/usr/bin/node" "/home/me/chrome/src/host.ts"\r\n');
+	assert.equal(readFileSync(join(hostDir, "gentle-shell-host.bat"), "utf8"), '@echo off\r\n%SystemRoot%\\System32\\wsl.exe -d Ubuntu -e "/usr/bin/node" "/home/me/chrome/src/host.ts"\r\n');
 	assert.deepEqual(registered, [`${hostDirWindows}\\dev.gentle.shell.json`]);
 });
 
@@ -158,4 +162,11 @@ test("installExtension refuses a non-empty host folder that is not a previous ho
 	assert.equal(existsSync(targetDir), false);
 	assert.equal(recordedTarget(configDir), undefined);
 	assert.deepEqual(registered, []);
+});
+
+test("the worker reports the build its own code was installed with, not the build.json on disk", () => {
+	const worker = readFileSync(join(REPO_EXTENSION_DIR, "background.js"), "utf8");
+	assert.match(worker, /^import \{ BUILD \} from "\.\/build\.js";$/m);
+	assert.equal(worker.includes("build.json"), false);
+	assert.equal(readFileSync(join(REPO_EXTENSION_DIR, "build.js"), "utf8"), '// Written by install; the build this copy\'s code belongs to.\nexport const BUILD = "unknown";\n');
 });

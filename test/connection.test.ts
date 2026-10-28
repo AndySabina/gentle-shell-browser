@@ -238,6 +238,74 @@ test("a newer extension connection marks the older one replaced", async () => {
 	}
 });
 
+test("a replaced connection waits, then the next ensure reconnects it to the same session", async () => {
+	const bridge = await startBridge({ token: TOKEN, port: 0, sessionId: SESSION, handlers: {} });
+	const first = extension();
+	const second = extension();
+	try {
+		first.connection.open({ port: bridge.port, token: TOKEN, sessionId: SESSION });
+		await waitUntil(() => first.connection.state === "connected");
+		second.connection.open({ port: bridge.port, token: TOKEN, sessionId: SESSION });
+		await waitUntil(() => first.connection.state === "replaced" && second.connection.state === "connected");
+		await new Promise((resolve) => setTimeout(resolve, 1200));
+		assert.deepEqual(first.states, ["connecting", "connected", "replaced"]);
+		assert.equal(second.connection.state, "connected");
+		second.connection.close();
+		await waitUntil(() => bridge.connected() === undefined);
+		first.connection.ensure();
+		await waitUntil(() => first.connection.state === "connected" && bridge.connected() !== undefined);
+		assert.deepEqual(first.states, ["connecting", "connected", "replaced", "connecting", "connected"]);
+	} finally {
+		first.connection.close();
+		second.connection.close();
+		await bridge.close();
+	}
+});
+
+test("ensure does not reconnect an unauthorized or untrusted connection", async () => {
+	const replies: [string, (socket: WebSocket, message: any) => void][] = [
+		["unauthorized", (socket, message) => {
+			if (message.kind !== "hello") return socket.close(4401, "unauthorized");
+			const serverNonce = randomBytes(32).toString("base64url");
+			socket.send(JSON.stringify({ kind: "challenge", sessionId: SESSION, serverNonce, proof: proof(TOKEN, "server", message.clientNonce, serverNonce) }));
+		}],
+		["untrusted", (socket) => socket.send(JSON.stringify({ kind: "welcome" }))],
+	];
+	for (const [state, reply] of replies) {
+		const fake = await fakeServer(reply);
+		const { connection, states } = extension();
+		try {
+			connection.open({ port: fake.port, token: TOKEN, sessionId: SESSION });
+			await waitUntil(() => connection.state === state);
+			connection.ensure();
+			await new Promise((resolve) => setTimeout(resolve, 100));
+			assert.deepEqual(states, ["connecting", state], state);
+			assert.equal(fake.connections(), 1, state);
+		} finally {
+			connection.close();
+			await fake.close();
+		}
+	}
+});
+
+test("ensure does not reconnect after close", async () => {
+	const bridge = await startBridge({ token: TOKEN, port: 0, sessionId: SESSION, handlers: {} });
+	const { connection, states } = extension();
+	try {
+		connection.open({ port: bridge.port, token: TOKEN, sessionId: SESSION });
+		await waitUntil(() => connection.state === "connected" && bridge.connected() !== undefined);
+		connection.close();
+		await waitUntil(() => bridge.connected() === undefined);
+		connection.ensure();
+		await new Promise((resolve) => setTimeout(resolve, 100));
+		assert.deepEqual(states, ["connecting", "connected", "off"]);
+		assert.equal(bridge.connected(), undefined);
+	} finally {
+		connection.close();
+		await bridge.close();
+	}
+});
+
 async function waitUntil(condition: () => boolean, timeoutMs = 2000): Promise<void> {
 	const end = Date.now() + timeoutMs;
 	while (!condition()) {

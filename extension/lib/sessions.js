@@ -342,6 +342,16 @@ export class SessionManager {
 		await owner?.connection?.call("stop", {}).catch(() => {});
 	}
 
+	/**
+	 * The session gave up waiting for its step (timeout or Esc): halt its
+	 * actions, running or queued, so none acts later or holds up the others.
+	 * Its run is not aborted: the session asked for this.
+	 * @param {Session} session
+	 */
+	async cancel(session) {
+		await this.deps.stopActions?.(session.id);
+	}
+
 	/** STOP in the popup: halt input and abort every connected session's run. */
 	async stopAll() {
 		await this.deps.stopActions?.();
@@ -461,6 +471,10 @@ export function sessionHandlers(manager, session, deps) {
 		key: act("key"),
 		scroll: act("scroll"),
 		navigate: act("navigate"),
+		cancel: async () => {
+			await manager.cancel(session);
+			return { cancelled: true };
+		},
 		// For the user's /browser level and /browser rules commands only; no Gentle Shell tool calls these.
 		getLevel: async () => ({ level: (await deps.settings()).level }),
 		/** @param {any} params */
