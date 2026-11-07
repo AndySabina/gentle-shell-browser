@@ -1,13 +1,38 @@
 import { type Bridge, type ExtensionInfo, type Handler, startBridge } from "./bridge.ts";
 import { listenOnFreePort, newSessionId, normalizeSessionName, removeSessionRecord, writeSessionRecord } from "./sessions.ts";
 import { loadOrCreateToken } from "./token.ts";
-import { buildId, installExtension, REPO_EXTENSION_DIR, recordedTarget } from "./update.ts";
+import { buildId, type HostBinding, hostBinding, installExtension, REPO_EXTENSION_DIR, recordedTarget } from "./update.ts";
 
 const HOST = "127.0.0.1";
 const RELOAD_ATTEMPTS = 10;
 const RELOAD_RETRY_MS = 30_000;
 const NO_TARGET = "run scripts/install-extension.sh once to enable automatic updates.";
 const MANUAL_RELOAD = "Gentle Chrome: copied the new extension; reload it once in chrome://extensions (Gentle Shell Browser card) — after that it updates itself.";
+
+function shellQuote(text: string): string {
+	return `'${text.replaceAll("'", "'\\''")}'`;
+}
+
+/**
+ * Which config folder this session uses and whether the installed Chrome
+ * helper reads it, from the install's files; Chrome itself is not asked.
+ */
+function bindingLine(configDir: string, binding: HostBinding = hostBinding(configDir)): string {
+	const fix = `run GENTLE_CHROME_CONFIG_DIR=${shellQuote(configDir)} scripts/install-extension.sh in the gentle-shell-browser folder.`;
+	const detail =
+		binding.state === "bound"
+			? `the Chrome helper in ${binding.hostDir} is installed for this folder.`
+			: binding.state === "stale"
+				? `the Chrome helper in ${binding.hostDir} starts Node from ${binding.nodePath}, which no longer exists, so Chrome cannot start it: run /browser update, or ${fix}`
+				: binding.state === "absent"
+					? `no Chrome helper installation is recorded for this folder; host binding is unknown: ${fix}`
+					: binding.state === "mismatched"
+						? `the Chrome helper in ${binding.hostDir} reads ${binding.boundTo} instead; this recorded helper is bound to a different folder: ${fix}`
+						: binding.state === "unbound"
+							? `the Chrome helper in ${binding.hostDir} reads the config folder of its own environment, which may differ: ${fix}`
+							: `could not check the Chrome helper${binding.hostDir ? ` in ${binding.hostDir}` : ""}: ${binding.reason}; ${fix}`;
+	return `Gentle Chrome: config folder ${configDir}; ${detail}`;
+}
 
 function updateFailed(reason: unknown): string {
 	return `Gentle Chrome: could not update the Chrome extension: ${reason instanceof Error ? reason.message : String(reason)}`;
@@ -83,9 +108,8 @@ export class BrowserController {
 		if (!this.bridge) return ["Gentle Chrome: not running. Run /browser start."];
 		const info = this.bridge.connected();
 		const where = `session "${this.name}" (${this.sessionId}) listening on ${HOST}:${this.bridge.port}`;
-		return info
-			? [`Gentle Chrome: ${where}, Chrome connected (extension ${info.version}).`]
-			: [`Gentle Chrome: ${where}, Chrome not connected; the browser tools appear when it connects.`];
+		const connection = info ? `Gentle Chrome: ${where}, Chrome connected (extension ${info.version}).` : `Gentle Chrome: ${where}, Chrome not connected; the browser tools appear when it connects.`;
+		return [connection, bindingLine(this.deps.configDir)];
 	}
 
 	/** `/browser update`: copies the extension to its recorded folder now and reloads it if Chrome runs another build. */
@@ -134,6 +158,9 @@ export class BrowserController {
 		}
 		this.bridge = bridge;
 		this.deps.setStatus?.("Chrome: waiting");
+		// Nobody reads the start lines, and Chrome fails silently on a helper it cannot start: say so once.
+		const binding = hostBinding(this.deps.configDir);
+		if (binding.state === "stale") this.notify(bindingLine(this.deps.configDir, binding));
 		return this.status();
 	}
 

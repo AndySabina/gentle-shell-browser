@@ -14,6 +14,12 @@
 # writes the native messaging host into <target>-host and registers it under
 # HKCU\Software\Google\Chrome\NativeMessagingHosts\dev.gentle.shell (no admin needed),
 # so the extension finds Gentle Shell without a pairing code.
+#
+# Inside a Gentle Shell session PATH may lack the Windows folders and
+# WSL_DISTRO_NAME may be unset: cmd.exe and powershell.exe are then looked up in
+# C:\Windows\System32, and the helper starts the distribution `wslpath -w /`
+# names (printed below). When it names none and the target is on a Windows
+# drive, the install stops and asks for WSL_DISTRO_NAME.
 set -euo pipefail
 
 NAME="Gentle Shell Browser"
@@ -36,11 +42,22 @@ command -v node >/dev/null || fail "node not found: install Node 22.18 or newer.
 if [ "$#" -eq 1 ]; then
 	target_arg=$1
 else
+	# A Gentle Shell session's PATH may lack System32: look there after PATH.
+	system32=$(wslpath -u 'C:\Windows\System32' 2>/dev/null || true)
+	windows_command() {
+		if command -v "$1" 2>/dev/null; then return 0; fi
+		if [ -n "$system32" ] && [ -x "$system32/$2" ]; then echo "$system32/$2"; fi
+		return 0
+	}
+	cmd=$(windows_command cmd.exe cmd.exe)
+	powershell=$(windows_command powershell.exe WindowsPowerShell/v1.0/powershell.exe)
 	# cmd.exe warns about UNC paths when started from a WSL directory, so run it from C:.
-	if command -v cmd.exe >/dev/null; then
-		profile=$(cd /mnt/c 2>/dev/null && cmd.exe /c echo %USERPROFILE% 2>/dev/null | tr -d '\r')
-	elif command -v powershell.exe >/dev/null; then
-		profile=$(cd /mnt/c 2>/dev/null && powershell.exe -NoProfile -Command '$env:USERPROFILE' 2>/dev/null | tr -d '\r')
+	drive_c=$(wslpath -u 'C:\' 2>/dev/null || true)
+	drive_c=${drive_c:-/mnt/c}
+	if [ -n "$cmd" ]; then
+		profile=$(cd "$drive_c" 2>/dev/null && "$cmd" /c echo %USERPROFILE% 2>/dev/null | tr -d '\r')
+	elif [ -n "$powershell" ]; then
+		profile=$(cd "$drive_c" 2>/dev/null && "$powershell" -NoProfile -Command '$env:USERPROFILE' 2>/dev/null | tr -d '\r')
 	else
 		fail "neither cmd.exe nor powershell.exe found: pass the target folder explicitly."
 	fi
@@ -86,6 +103,10 @@ version=$(grep -Eo '"version"[[:space:]]*:[[:space:]]*"[^"]+"' "$source_dir/mani
 host_windows_path=$(wslpath -w "$host_dir" 2>/dev/null || echo "$host_dir")
 echo "Copied $NAME ${version:+$version }(build $build) to $windows_path"
 echo "Native host written to $host_windows_path"
+if [ -z "${WSL_DISTRO_NAME:-}" ]; then
+	distro=$(grep -Eo 'wsl\.exe -d [^ ]+' "$host_dir/gentle-shell-host.bat" | cut -d' ' -f3 || true)
+	[ -z "$distro" ] || echo "WSL_DISTRO_NAME is not set; the helper starts WSL distribution $distro (from wslpath -w /)."
+fi
 case "$registry" in
 updated) echo "Registry updated: HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\dev.gentle.shell" ;;
 unchanged) echo "Registry already up to date: HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\dev.gentle.shell" ;;

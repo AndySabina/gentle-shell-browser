@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHmac, randomBytes } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -30,7 +30,7 @@ function controller(overrides: Partial<ConstructorParameters<typeof BrowserContr
 	const configDir = mkdtempSync(join(tmpdir(), "gentle-chrome-ctl-"));
 	const statuses: (string | undefined)[] = [];
 	const ctl = new BrowserController({ configDir, port: 0, sessionName: () => "chrome", abort: () => {}, setStatus: (text) => statuses.push(text), ...overrides });
-	return { ctl, configDir, statuses };
+	return { ctl, configDir: overrides.configDir ?? configDir, statuses };
 }
 
 test("there is no pairing code anymore: the native messaging host hands the extension the token", () => {
@@ -41,13 +41,15 @@ test("there is no pairing code anymore: the native messaging host hands the exte
 test("status reports listening, then connected with the extension version", async () => {
 	const { ctl, configDir, statuses } = controller();
 	try {
-		await ctl.start();
-		assert.deepEqual(ctl.status(), [`Gentle Chrome: session "chrome" (${ctl.sessionId}) listening on 127.0.0.1:${ctl.port()}, Chrome not connected; the browser tools appear when it connects.`]);
+		const binding = absentLine(configDir);
+		assert.deepEqual(await ctl.start(), [`Gentle Chrome: session "chrome" (${ctl.sessionId}) listening on 127.0.0.1:${ctl.port()}, Chrome not connected; the browser tools appear when it connects.`, binding]);
+		assert.deepEqual(ctl.status(), [`Gentle Chrome: session "chrome" (${ctl.sessionId}) listening on 127.0.0.1:${ctl.port()}, Chrome not connected; the browser tools appear when it connects.`, binding]);
 		const socket = new WebSocket(`ws://127.0.0.1:${ctl.port()}`, { origin: ORIGIN });
 		await new Promise((resolve) => socket.once("open", resolve));
 		authenticate(socket, loadOrCreateToken(configDir));
 		await waitUntil(() => statuses.includes("Chrome: connected"));
-		assert.deepEqual(ctl.status(), [`Gentle Chrome: session "chrome" (${ctl.sessionId}) listening on 127.0.0.1:${ctl.port()}, Chrome connected (extension 0.1.0).`]);
+		// Connected and the helper binding are separate facts: a live connection does not make the binding line claim more.
+		assert.deepEqual(ctl.status(), [`Gentle Chrome: session "chrome" (${ctl.sessionId}) listening on 127.0.0.1:${ctl.port()}, Chrome connected (extension 0.1.0).`, binding]);
 		socket.close();
 		await waitUntil(() => statuses.at(-1) === "Chrome: waiting");
 	} finally {
@@ -231,6 +233,86 @@ function updater(options: { record?: boolean } = {}) {
 	writeFileSync(join(extensionDir, "background.js"), "// v2\n");
 	return { ...parts, extensionDir, targetDir, notices, build: buildId(extensionDir) };
 }
+
+/** The fix every binding problem ends with. */
+function installHint(configDir: string): string {
+	return `run GENTLE_CHROME_CONFIG_DIR='${configDir}' scripts/install-extension.sh in the gentle-shell-browser folder.`;
+}
+
+function absentLine(configDir: string): string {
+	return `Gentle Chrome: config folder ${configDir}; no Chrome helper installation is recorded for this folder; host binding is unknown: ${installHint(configDir)}`;
+}
+
+test("status names the config folder and whether the installed Chrome helper reads it", async () => {
+	const { ctl, configDir, targetDir, notices } = updater();
+	const hostDir = `${targetDir}-host`;
+	try {
+		await ctl.start();
+		// A helper that can start is not announced.
+		assert.deepEqual(notices, []);
+		assert.equal(ctl.status()[1], `Gentle Chrome: config folder ${configDir}; the Chrome helper in ${hostDir} is installed for this folder.`);
+		// The installer ran with another environment (outside the private Gentle Shell layout).
+		const outside = mkdtempSync(join(tmpdir(), "gentle-chrome-outside-"));
+		installExtension({ sourceDir: extensionSource(), targetDir, configDir: outside });
+		assert.equal(ctl.status()[1], `Gentle Chrome: config folder ${configDir}; the Chrome helper in ${hostDir} reads ${outside} instead; this recorded helper is bound to a different folder: ${installHint(configDir)}`);
+		// A helper written before config binding.
+		writeFileSync(join(hostDir, "gentle-shell-host.bat"), `@echo off\r\n%SystemRoot%\\System32\\wsl.exe -e "${process.execPath}" "/x/src/host.ts"\r\n`);
+		assert.equal(ctl.status()[1], `Gentle Chrome: config folder ${configDir}; the Chrome helper in ${hostDir} reads the config folder of its own environment, which may differ: ${installHint(configDir)}`);
+		renameSync(hostDir, `${hostDir}-moved`);
+		assert.equal(ctl.status()[1], `Gentle Chrome: config folder ${configDir}; could not check the Chrome helper in ${hostDir}: ${join(hostDir, "gentle-shell-host.bat")} is missing; ${installHint(configDir)}`);
+	} finally {
+		await ctl.stop();
+	}
+	// Not running: unchanged single line.
+	assert.deepEqual(ctl.status(), ["Gentle Chrome: not running. Run /browser start."]);
+});
+
+test("/browser update rebinds the Chrome helper to this session's config folder", async () => {
+	const { ctl, configDir, targetDir } = updater();
+	try {
+		await ctl.start();
+		installExtension({ sourceDir: extensionSource(), targetDir, configDir: mkdtempSync(join(tmpdir(), "gentle-chrome-outside-")) });
+		assert.match(ctl.status()[1], / instead; this recorded helper is bound to a different folder: /);
+		await ctl.update();
+		assert.equal(ctl.status()[1], `Gentle Chrome: config folder ${configDir}; the Chrome helper in ${targetDir}-host is installed for this folder.`);
+	} finally {
+		await ctl.stop();
+	}
+});
+
+test("a helper whose Node no longer exists is reported at start and in status, and /browser update rewrites it with this session's Node", async () => {
+	const extensionDir = extensionSource();
+	const notices: string[] = [];
+	const { ctl, configDir } = controller({ extensionDir, notify: (text: string) => notices.push(text) });
+	const targetDir = join(mkdtempSync(join(tmpdir(), "gentle-chrome-target-")), "gentle-shell-chrome");
+	// Installed with the Node of a Gentle Shell runtime that a reinstall removed.
+	const gone = join(mkdtempSync(join(tmpdir(), "gentle-chrome-runtime-")), "node-v22.18.0", "bin", "node");
+	installExtension({ sourceDir: extensionDir, targetDir, configDir, deps: { nodePath: gone } });
+	const hostDir = `${targetDir}-host`;
+	const stale = `Gentle Chrome: config folder ${configDir}; the Chrome helper in ${hostDir} starts Node from ${gone}, which no longer exists, so Chrome cannot start it: run /browser update, or ${installHint(configDir)}`;
+	try {
+		await ctl.start();
+		assert.deepEqual(notices, [stale]);
+		assert.equal(ctl.status()[1], stale);
+		assert.deepEqual(await ctl.update(), [`Gentle Chrome: copied build ${buildId(extensionDir)} to ${targetDir}; Chrome is not connected, so it updates when it connects.`]);
+		assert.ok(readFileSync(join(hostDir, "gentle-shell-host.bat"), "utf8").includes(` -e "${process.execPath}" `));
+		assert.equal(ctl.status()[1], `Gentle Chrome: config folder ${configDir}; the Chrome helper in ${hostDir} is installed for this folder.`);
+		assert.deepEqual(notices, [stale]);
+	} finally {
+		await ctl.stop();
+	}
+});
+
+test("the install hint quotes a config folder with a single quote for the shell", async () => {
+	const configDir = join(mkdtempSync(join(tmpdir(), "gentle-chrome-ctl-")), "it's");
+	const { ctl } = controller({ configDir });
+	try {
+		await ctl.start();
+		assert.equal(ctl.status()[1], `Gentle Chrome: config folder ${configDir}; no Chrome helper installation is recorded for this folder; host binding is unknown: run GENTLE_CHROME_CONFIG_DIR='${configDir.replace("'", "'\\''")}' scripts/install-extension.sh in the gentle-shell-browser folder.`);
+	} finally {
+		await ctl.stop();
+	}
+});
 
 const OLD = "0000000000000000";
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -508,7 +590,7 @@ test("/browser level with an unknown or old name shows the usage; without a brid
 		assert.deepEqual(await levelCommand(fake, name, context), [USAGE], name);
 		assert.deepEqual(calls, []);
 	}
-	assert.equal(USAGE, "Usage: /browser [status | start | stop | update | level [always | remember | never] | rules [clear [site]]]");
+	assert.equal(USAGE, "Usage: /browser [status | start | stop | update | level [always | remember | never] | rules [clear [site]] | watch [on | off | allow <chat> | remove <chat>]]");
 	const stopped = commandSetup({ running: false });
 	assert.deepEqual(await levelCommand(stopped.fake, "never", stopped.context), ["Gentle Chrome: not running. Run /browser start."]);
 	assert.deepEqual(await rulesCommand(stopped.fake, [], stopped.context), ["Gentle Chrome: not running. Run /browser start."]);

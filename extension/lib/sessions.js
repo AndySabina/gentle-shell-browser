@@ -374,6 +374,7 @@ export class SessionManager {
  *   setLevel: (level: unknown) => Promise<unknown>,
  *   clearRules: (site?: string) => Promise<unknown>,
  *   reload: () => Promise<unknown>,
+ *   watch: import("./whatsapp.js").WhatsAppWatch,
  *   version: string,
  *   tracked?: (session: Session, handler: (params: any) => Promise<any>) => (params: any) => Promise<any>,
  *   screenshotTimeoutMs?: number,
@@ -483,5 +484,13 @@ export function sessionHandlers(manager, session, deps) {
 		/** @param {any} params */
 		clearRules: (params) => deps.clearRules(typeof params?.site === "string" ? params.site : undefined),
 		reload: () => deps.reload(),
+		// For the user's /browser watch commands only; no Gentle Shell tool calls these.
+		getWatch: () => deps.watch.state(session),
+		/** @param {any} params */
+		setWatch: (params) => deps.watch.setWatch(session, params?.on === true),
+		/** @param {any} params */
+		allowChat: (params) => deps.watch.allow(params?.chat),
+		/** @param {any} params */
+		removeChat: (params) => deps.watch.remove(params?.chat),
 	};
 }

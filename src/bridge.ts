@@ -139,8 +139,9 @@ export function startBridge(options: BridgeOptions): Promise<Bridge> {
 			for (const [method, handler] of Object.entries(options.handlers)) peer.handle(method, handler);
 			client = { socket, peer, info: hello.info };
 			const previous = current;
-			setCurrent(client);
+			// Welcome first: whoever hears of the connection may call the extension at once.
 			socket.send(JSON.stringify({ kind: "welcome" }));
+			setCurrent(client);
 			if (previous) previous.socket.close(CLOSE_REPLACED, "replaced by a newer connection");
 		});
 

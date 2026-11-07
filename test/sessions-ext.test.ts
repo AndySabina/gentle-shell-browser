@@ -163,6 +163,7 @@ function setup(initial: Record<string, unknown> = {}, policy: { level?: string; 
 			const connection = new FakeConnection(
 				sessionHandlers(manager, session, {
 					actions,
+					watch: {} as any,
 					cdp: {
 						async evaluate(_tabId: number, expression: string) {
 							sent.push("evaluate");
@@ -557,6 +558,7 @@ test("a screenshot of a background tab still fails after the timeout with the ex
 	const { tabId } = await manager.get(A.id)!.group.openTab("https://a.test/");
 	const handlers = sessionHandlers(manager, manager.get(A.id)!, {
 		actions: fakeActions() as any,
+		watch: {} as any,
 		cdp: { evaluate: async () => undefined, send: (_tabId: number, method: string) => (method === "Page.getLayoutMetrics" ? Promise.resolve(layoutMetrics(1280, 720, 1)) : new Promise(() => {})) },
 		settings: async () => ({ level: "always", riskyDomains: [] }),
 		setLevel: async () => undefined,

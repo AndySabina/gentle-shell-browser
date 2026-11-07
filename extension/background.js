@@ -11,6 +11,7 @@ import { NavGuard } from "./lib/navguard.js";
 import { Overlay, STOP_BINDING } from "./lib/overlay.js";
 import { MODES, normalizeSettings, WAITING_LABEL, withoutRule, withoutSite, withRule } from "./lib/policy.js";
 import { HELPER, HELPER_MISSING, parseDiscovery, SessionManager, sessionHandlers } from "./lib/sessions.js";
+import { isWhatsAppUrl, WhatsAppWatch, watchPopup } from "./lib/whatsapp.js";
 
 const VERSION = chrome.runtime.getManifest().version;
 /** Time for the reload reply to reach Gentle Shell before the worker goes away. */
@@ -71,6 +72,20 @@ const sessions = new SessionManager({
 	createConnection: (session) => connectionFor(session),
 	// Without an owner (popup STOP): every session's actions.
 	stopActions: (owner) => actions.stop(owner),
+});
+
+// New messages in a session's WhatsApp Web tab, while the user has its watch on.
+// The reader is injected only then; host_permissions limit it to WhatsApp Web.
+const watch = new WhatsAppWatch({
+	local: chrome.storage.local,
+	// Cleared when Chrome or the extension restarts: the watch starts off again.
+	session: chrome.storage.session,
+	sessions,
+	ready: () => discovered,
+	read: async (tabId) => (await chrome.scripting.executeScript({ target: { tabId }, files: ["whatsapp.js"] }))[0]?.result,
+	stop: (tabId) => chrome.scripting.executeScript({ target: { tabId }, func: () => globalThis.__gentleShellWhatsAppWatchStop?.() }),
+	// From the popup or from /browser watch: open popups show it at once.
+	changed: () => void chrome.runtime.sendMessage({ type: "watch-changed" }).catch(() => {}),
 });
 
 // The debugger never attaches, or attaches again, to a tab outside every session's group.
@@ -144,7 +159,7 @@ function connectionFor(session) {
 		createSocket: (url) => new WebSocket(url),
 		version: VERSION,
 		build: () => BUILD,
-		handlers: sessionHandlers(sessions, session, { actions, cdp, settings: policySettings, setLevel, clearRules, reload, version: VERSION, tracked }),
+		handlers: sessionHandlers(sessions, session, { actions, cdp, settings: policySettings, setLevel, clearRules, reload, watch, version: VERSION, tracked }),
 		onState: (state) => {
 			// Without its Gentle Shell nobody controls this session's tabs: stop its
 			// actions (other sessions' go on), or just remove the cursor and the debugger from them.
@@ -190,6 +205,11 @@ chrome.tabs.onUpdated.addListener(async (tabId, change) => {
 	await cdp.detach(tabId);
 });
 
+// A page load drops the WhatsApp reader; a tab that joins a group may now be watched.
+chrome.tabs.onUpdated.addListener((tabId, change, tab) => {
+	if (change.status === "complete" || change.groupId !== undefined) void watch.tabLoaded(tabId, tab.url ?? "");
+});
+
 /** Asks the native messaging host for the token and the live sessions, then connects to them. */
 async function discover() {
 	let reply;
@@ -219,7 +239,7 @@ chrome.alarms.create("gentle-reconnect", { periodInMinutes: 0.5 });
 chrome.alarms.onAlarm.addListener((alarm) => {
 	if (alarm.name === "gentle-reconnect") void discover();
 });
-void discover();
+const discovered = discover();
 
 /** Popup requests. */
 const popup = {
@@ -253,10 +273,16 @@ const popup = {
 		await clearRules();
 		return popup.settings();
 	},
+	...watchPopup(watch),
 };
 
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
 	if (sender.id !== chrome.runtime.id || !message || typeof message.type !== "string") return false;
+	// From a page, only the WhatsApp reader's chat list; popup requests come from no tab.
+	if (sender.tab) {
+		if (message.type === "whatsapp-chats" && sender.tab.id !== undefined && isWhatsAppUrl(sender.url ?? "")) void watch.report(sender.tab.id, message.rows);
+		return false;
+	}
 	const action = popup[message.type];
 	if (!action) return false;
 	Promise.resolve(action(message)).then(

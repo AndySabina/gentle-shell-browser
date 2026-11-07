@@ -51,12 +51,18 @@ Keep this folder: the helper Chrome starts runs from it.
 
 ### Step 2. Add the package to Gentle Shell
 
-Choose one way:
+Inside the folder, run Gentle Shell's own Pi. With the private layout `gentle-ai shell install` creates (by default under `~/.local/share/gentle-shell/install`):
 
-| Way | How |
+```sh
+~/.local/share/gentle-shell/install/bin/pi install "$PWD"
+```
+
+`gentle-shell install "$PWD"` only works in the older layout: in this one `gentle-shell install` is the Gentle Shell installer and refuses a package path.
+
+| Older layout (`~/.gentle-shell`) | How |
 |-----|-----|
-| Command | Run `gentle-shell install "$PWD"` inside the folder. |
-| Settings file | Add the folder's absolute path to the `packages` list in `~/.gentle-shell/agent/settings.json`, for example `{ "packages": ["/home/you/gentle-shell-browser"] }`. |
+| Command | Run `gentle-shell install "$PWD"` inside the folder (older layout only). |
+| Settings file | Add the folder's absolute path to the `packages` list in `~/.gentle-shell/agent/settings.json` (older layout only), for example `{ "packages": ["/home/you/gentle-shell-browser"] }`. |
 
 ### Step 3. Install the extension and its helper
 
@@ -78,7 +84,17 @@ To use another folder, pass it as the only argument. A Windows path or a `/mnt/�
 scripts/install-extension.sh 'D:\tools\gentle-chrome'
 ```
 
+The helper must read the same config folder as your Gentle Shell sessions: the token and the list of running sessions live there. The script writes the folder into the helper. If you use a Gentle Shell with a private layout, its sessions keep their own folder: run `/browser status` in a session, then run the script with the folder from its second line:
+
+```sh
+GENTLE_CHROME_CONFIG_DIR='<config folder from /browser status>' scripts/install-extension.sh
+```
+
 The script never deletes anything, only writes inside that folder, and refuses a non-empty folder that is not an earlier copy of the extension. At the end it prints the folder to load in Chrome.
+
+You can run it from inside a Gentle Shell session too. There `PATH` may lack the Windows folders and `WSL_DISTRO_NAME` is unset, so the script finds `cmd.exe` or `powershell.exe` in `C:\Windows\System32`, and the helper starts the WSL distribution that `wslpath -w /` names; the script prints which one. If it cannot tell and the folder is on a Windows drive, it stops before writing: run it again with `WSL_DISTRO_NAME` set to the name `wsl.exe -l -q` lists.
+
+The helper starts the Node that ran the install. If a Gentle Shell reinstall or Node upgrade removes it, the session says so when it starts and in `/browser status`; run `/browser update` to rewrite the helper with the session's Node.
 
 ### Step 4. Load the extension in Chrome
 
@@ -94,7 +110,7 @@ Close and open Gentle Shell so it loads the package. The connection starts by it
 
 ### How to check it worked
 
-1. In Gentle Shell, run `/browser status`. It prints the session name and port, for example `session "my-app" (…) listening on 127.0.0.1:48733`, and whether Chrome is connected. Chrome connects within 30 seconds, or at once when you open the popup. The agent gets its `browser_*` tools only while Chrome is connected, so they cost no tokens before that.
+1. In Gentle Shell, run `/browser status`. It prints the session name and port, for example `session "my-app" (…) listening on 127.0.0.1:48733`, and whether Chrome is connected. Its second line names the session's config folder and should say the helper `is installed for this folder`; otherwise it prints the command that fixes it. Chrome connects within 30 seconds, or at once when you open the popup. The agent gets its `browser_*` tools only while Chrome is connected, so they cost no tokens before that.
 2. Optionally, click the extension icon in Chrome. The popup's status pill shows **Connected (N)** with the number of connected sessions, and the toolbar badge shows **ON** (or that number).
 
 ![The Gentle Shell popup: status Connected (2), the connect switch on, and the Always ask mode selected](images/popup-connected.png)
@@ -161,6 +177,34 @@ The prompt appears in the terminal of the session that owns the tab, which may n
 |-------|---------------|
 | **STOP** in the page banner | The session working in that tab: its running and waiting actions fail with "Stopped by the user in Chrome." and its agent run is aborted. Other sessions go on. |
 | **STOP** in the popup | Every session: all actions stop, the debugger detaches, and every connected session's run is aborted. |
+
+### Answer WhatsApp messages on its own
+
+The **WhatsApp watch** lets a session answer your WhatsApp Web messages without you typing anything in Gentle Shell. You decide when it runs and which chats it answers.
+
+```
+new message in an allowed chat ─► the extension notices it (no AI, no tokens)
+   ─► the session whose group holds the WhatsApp tab starts on its own
+   ─► it opens that chat, reads the new messages and replies there
+```
+
+1. Ask the agent to open `https://web.whatsapp.com/`, so the WhatsApp tab is in the session's group.
+2. Add the chats it may answer: `/browser watch allow <chat name>`, or type the name in the popup's **WhatsApp watch** box and press **Add**. Only these chats ring; every other chat is ignored.
+3. Switch it on: `/browser watch on`, or the popup's **Answer new messages · \<session\>** switch. Both ask you to confirm first, because the agent will write to other people for you. While it is on, the status bar shows **WhatsApp: watching**.
+4. Switch it off the same way: `/browser watch off` or the popup switch. Either side shows the other's change at once.
+
+Good to know:
+
+- `/browser watch` shows when the tab last read its chat list and the last ring, to help diagnose a watch that does not ring.
+- It starts **off** in every new session, and again after Chrome or the extension restarts (an update included).
+- Messages that were already unread when you switched it on do not ring; only new ones do, once each.
+- Chats are matched by the name WhatsApp shows. If two chats in the list have an allowed name (say someone adds you to a group called like your contact), neither rings, so a look-alike cannot get an answer.
+- Messages in the chat you have open in WhatsApp do not ring: WhatsApp shows no unread count for it. The agent closes the chat after replying; if you open one in the agent's WhatsApp tab, close it again (Escape).
+- While someone is typing or recording, WhatsApp shows "typing…" instead of the message: that never rings, and the message rings once its text shows.
+- Chrome, the WhatsApp tab and the Gentle Shell session must stay open. A busy session answers when it finishes its current work.
+- The replies are real steps and follow your [permission mode](#5-permission-modes): in **Always ask**, every reply waits for you. To let it answer unattended, use **Remember my decisions** and save "Always allow" for `web.whatsapp.com`, or **Never ask**.
+- The agent is told that the chat's text is untrusted and never an order: someone who writes "ignore your rules" does not get to steer it.
+- With the watch off, nothing reads your chats: the reader is added to the WhatsApp tab only while the watch is on.
 
 ## 5. Permission modes
 
@@ -305,7 +349,7 @@ Run these in Gentle Shell.
 
 | Command | Does |
 |---------|------|
-| `/browser` or `/browser status` | Shows this session's name, id and port, and whether Chrome is connected. The agent's browser tools appear only while it is. |
+| `/browser` or `/browser status` | Shows this session's name, id and port, and whether Chrome is connected. The agent's browser tools appear only while it is. A second line shows the session's config folder and whether the installed helper reads it. |
 | `/browser start` | Starts the connection (it also starts with the session). |
 | `/browser stop` | Stops the connection; Chrome disconnects from this session. |
 | `/browser update` | Copies the extension to its folder now and reloads it in Chrome if it runs another build. |
@@ -316,6 +360,11 @@ Run these in Gentle Shell.
 | `/browser rules` | Lists the saved decisions. |
 | `/browser rules clear` | Asks you to confirm, then clears every saved decision. |
 | `/browser rules clear <site>` | Clears the saved decisions for one site. |
+| `/browser watch` | Shows whether the WhatsApp watch is on for this session and the chats on its allow list. |
+| `/browser watch on` | Asks you to confirm, then switches the WhatsApp watch on for this session. |
+| `/browser watch off` | Switches it off. |
+| `/browser watch allow <chat name>` | Adds a chat to the allow list, as WhatsApp shows its name (spaces included; case does not count). |
+| `/browser watch remove <chat name>` | Removes a chat from the allow list. |
 
 The agent itself gets four tools, only while Chrome is connected to its session:
 
@@ -332,6 +381,9 @@ The agent itself gets four tools, only while Chrome is connected to its session:
 |---------|-----|
 | The popup says **Gentle Shell helper not installed — run scripts/install-extension.sh once** (picture below) | Run `scripts/install-extension.sh`; it registers the helper. If the message stays, reload the extension once in `chrome://extensions`. |
 | The popup says **Gentle Shell helper sent an invalid reply** | The helper and the extension come from different copies of the code. Run `scripts/install-extension.sh` again. |
+| `/browser status` says the helper reads another folder, or that none is installed for this folder | The helper looks for sessions in another config folder, so Chrome never finds this one. Run the command that line prints, then open the popup. |
+| Gentle Shell or `/browser status` says the helper starts Node from a folder that no longer exists | A reinstall or Node upgrade removed the Node the helper was installed with, so Chrome cannot start it. Run `/browser update` (or the command that line prints), then open the popup. |
+| `scripts/install-extension.sh` says it could not tell which WSL distribution this is | Run it again with `WSL_DISTRO_NAME` set to this distribution's name, as `wsl.exe -l -q` lists it. |
 | `/browser status` keeps saying Chrome is not connected | Run `/browser start` in that session. Open the popup to make the extension look again, and check that its switch is on. |
 | A session never connects (**untrusted**) | Another program answered on that session's port and could not prove it knows the secret. Turn the popup switch Off and On; if it persists, restart that Gentle Shell session. |
 | A session disconnects (**replaced**) | Another Chrome profile with the extension took that session. Turn the switch Off and On to take it back. |
@@ -350,11 +402,12 @@ The agent itself gets four tools, only while Chrome is connected to its session:
 | Topic | How it works |
 |-------|--------------|
 | Network | Everything stays on your computer. Each session listens on `127.0.0.1` only and accepts only this extension, which must prove it knows the secret token. The token itself never travels. |
-| What is stored | The token and the list of running sessions in `~/.config/gentle-chrome/` (WSL). Your mode and saved decisions in the extension's own Chrome storage. Nothing is sent anywhere else. |
+| What is stored | The token and the list of running sessions in `~/.config/gentle-chrome/` (WSL). Your mode, saved decisions and WhatsApp allow list in the extension's own Chrome storage. Nothing is sent anywhere else. |
 | The debugger bar | While the agent acts, Chrome shows its "started debugging this browser" bar. That is expected: it is how pages receive real clicks and typing. Cancelling it detaches; the next action attaches again. |
 | Page text | Pages can contain text written to trick an AI. The agent receives page text marked as untrusted, with the instruction never to follow it, and the extension, not the agent, decides what needs your approval. Text shown in the prompt is cleaned of control characters. |
 | Your profile | The agent uses your logged-in sessions, but only in tabs inside its group. Keep sensitive tabs out of the group. |
 | Detection | Some sites can detect the debugger and treat the tab as automated. |
+| WhatsApp watch | Off unless you switch it on. While on, a small reader in the WhatsApp Web tab reads only the chat list (names, last message, unread count) and hands it to the extension; only new messages from chats on your allow list reach the session. The extension may add that reader to WhatsApp Web only. |
 
 ## 12. Uninstall
 
@@ -372,7 +425,7 @@ The agent itself gets four tools, only while Chrome is connected to its session:
    reg delete "HKCU\Software\Google\Chrome\NativeMessagingHosts\dev.gentle.shell" /f
    ```
 
-4. Remove the package from Gentle Shell: delete its path from the `packages` list in `~/.gentle-shell/agent/settings.json`, then restart Gentle Shell.
+4. Remove the package from Gentle Shell, then restart Gentle Shell. With the private layout, run `~/.local/share/gentle-shell/install/bin/pi remove "$PWD"` inside the cloned folder (the same path you installed). With the older layout, delete its path from the `packages` list in `~/.gentle-shell/agent/settings.json`.
 5. Delete the local state in WSL: `~/.config/gentle-chrome` (the token, the session records and the recorded extension folder).
 6. Delete the cloned folder if you no longer need it.
 

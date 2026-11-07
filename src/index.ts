@@ -5,6 +5,7 @@ import { askApproval } from "./approval.ts";
 import { BrowserController } from "./controller.ts";
 import { configDir } from "./token.ts";
 import { registerBrowserTools, setBrowserToolsActive } from "./tools.ts";
+import { refreshWatchStatus, watchCommand, watchHandlers } from "./watch.ts";
 
 function parsePort(value: string | undefined): number | undefined {
 	if (!value) return undefined;
@@ -12,8 +13,10 @@ function parsePort(value: string | undefined): number | undefined {
 	return Number.isInteger(port) && port > 0 && port < 65536 ? port : undefined;
 }
 
-export const USAGE = "Usage: /browser [status | start | stop | update | level [always | remember | never] | rules [clear [site]]]";
-const SUBCOMMANDS = ["status", "start", "stop", "update", "level", "rules"];
+const SUBCOMMAND_LIST = "status | start | stop | update | level [always | remember | never] | rules [clear [site]] | watch [on | off | allow <chat> | remove <chat>]";
+export const USAGE = `Usage: /browser [${SUBCOMMAND_LIST}]`;
+const SUBCOMMANDS = ["status", "start", "stop", "update", "level", "rules", "watch"];
+const WATCH_ACTIONS = ["on", "off", "allow", "remove"];
 /** The permission modes; the extension stores the mode under its old name, `level`. */
 const MODES: Record<string, string> = {
 	always: "Always ask — asks before every step",
@@ -98,6 +101,7 @@ export default function gentleChrome(pi: ExtensionAPI) {
 			prompts.delete(prompt);
 		}
 	};
+	const setWatchStatus = (text: string | undefined) => ctx?.ui.setStatus("gentle-chrome-watch", text);
 	const controller = new BrowserController({
 		configDir: configDir(process.env, homedir()),
 		// Unset: scan the session port range, so several sessions run side by side.
@@ -107,9 +111,13 @@ export default function gentleChrome(pi: ExtensionAPI) {
 		setStatus: (text) => ctx?.ui.setStatus("gentle-chrome", text),
 		notify: (text) => ctx?.ui.notify(text, "info"),
 		// The tools cost tokens on every turn: the model sees them only while Chrome is connected.
-		setBrowserToolsActive: (active) => setBrowserToolsActive(pi, active),
+		setBrowserToolsActive: (active) => {
+			setBrowserToolsActive(pi, active);
+			void refreshWatchStatus((method, params) => controller.call(method, params), active, setWatchStatus);
+		},
 		// The extension decided this step needs approval; the user answers here.
-		handlers: { approve },
+		// A new WhatsApp message from an allowed chat starts a turn while the user has the watch on.
+		handlers: { approve, ...watchHandlers((message, options) => pi.sendMessage(message, options), setWatchStatus) },
 	});
 
 	pi.on("session_start", async (_event, context) => {
@@ -130,12 +138,14 @@ export default function gentleChrome(pi: ExtensionAPI) {
 	);
 
 	pi.registerCommand("browser", {
-		description: "Control your Chrome from this session: /browser [status | start | stop | update | level [always | remember | never] | rules [clear [site]]]",
+		description: `Control your Chrome from this session: /browser [${SUBCOMMAND_LIST}]`,
 		getArgumentCompletions: (prefix) => {
 			const level = /^level\s+(\S*)$/.exec(prefix);
 			if (level) return Object.keys(MODES).filter((name) => name.startsWith(level[1])).map((name) => ({ value: `level ${name}`, label: name }));
 			const rules = /^rules\s+(\S*)$/.exec(prefix);
 			if (rules) return "clear".startsWith(rules[1]) ? [{ value: "rules clear", label: "clear" }] : [];
+			const watch = /^watch\s+(\S*)$/.exec(prefix);
+			if (watch) return WATCH_ACTIONS.filter((name) => name.startsWith(watch[1])).map((name) => ({ value: `watch ${name}`, label: name }));
 			return SUBCOMMANDS.filter((name) => name.startsWith(prefix)).map((name) => ({ value: name, label: name }));
 		},
 		handler: async (args, context) => {
@@ -151,6 +161,7 @@ export default function gentleChrome(pi: ExtensionAPI) {
 			} else if (action === "update") lines = await controller.update();
 			else if (action === "level") lines = await levelCommand(controller, name, context);
 			else if (action === "rules") lines = await rulesCommand(controller, rest, context);
+			else if (action === "watch") lines = await watchCommand(controller, rest, context);
 			else lines = [USAGE];
 			context.ui.notify(lines.join("\n"), "info");
 		},

@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { parseDiscovery } from "../extension/lib/sessions.js";
-import { encodeMessage, extensionIdFromKey, handleRequest, MessageReader, nativeHostFiles } from "../src/host.ts";
+import { encodeMessage, extensionIdFromKey, handleRequest, hostConfigDir, MessageReader, nativeHostFiles } from "../src/host.ts";
 import { newSessionId, writeSessionRecord } from "../src/sessions.ts";
 import { loadOrCreateToken } from "../src/token.ts";
 
@@ -94,6 +94,7 @@ test("nativeHostFiles builds the Chrome host manifest and a CRLF batch file with
 		hostScript: "/home/me/chrome/src/host.ts",
 		extensionId: "abcdefghijklmnopabcdefghijklmnop",
 		hostDirWindows: "C:\\Users\\me\\gentle-shell-chrome-host",
+		configDir: "/home/me/.local/share/gentle-shell/install/config/gentle-chrome",
 	};
 	assert.deepEqual(nativeHostFiles({ ...options, distro: "Ubuntu" }), {
 		manifest: {
@@ -103,22 +104,41 @@ test("nativeHostFiles builds the Chrome host manifest and a CRLF batch file with
 			type: "stdio",
 			allowed_origins: ["chrome-extension://abcdefghijklmnopabcdefghijklmnop/"],
 		},
-		bat: '@echo off\r\n%SystemRoot%\\System32\\wsl.exe -d Ubuntu -e "/usr/bin/node" "/home/me/chrome/src/host.ts"\r\n',
+		bat: '@echo off\r\n%SystemRoot%\\System32\\wsl.exe -d Ubuntu -e "/usr/bin/node" "/home/me/chrome/src/host.ts" --config-dir "/home/me/.local/share/gentle-shell/install/config/gentle-chrome"\r\n',
 	});
-	assert.equal(nativeHostFiles({ ...options, distro: "" }).bat, '@echo off\r\n%SystemRoot%\\System32\\wsl.exe -e "/usr/bin/node" "/home/me/chrome/src/host.ts"\r\n');
+	assert.equal(nativeHostFiles({ ...options, distro: "" }).bat, '@echo off\r\n%SystemRoot%\\System32\\wsl.exe -e "/usr/bin/node" "/home/me/chrome/src/host.ts" --config-dir "/home/me/.local/share/gentle-shell/install/config/gentle-chrome"\r\n');
+	// A folder with spaces stays one quoted argument.
+	assert.match(nativeHostFiles({ ...options, distro: "", configDir: "/home/me/my config" }).bat, / --config-dir "\/home\/me\/my config"\r\n$/);
+	assert.throws(() => nativeHostFiles({ ...options, distro: "", configDir: "/a\\" }), { message: "Unsafe path for the native host: /a\\" });
+	// The host runs with a Windows working folder, so a relative config folder would point somewhere else.
+	assert.throws(() => nativeHostFiles({ ...options, distro: "", configDir: "config/gentle-chrome" }), { message: "Native host config folder must be an absolute path: config/gentle-chrome" });
 	// wsl.exe keeps quotes in the -d value, so the name goes unquoted and must be a plain distro name.
 	assert.throws(() => nativeHostFiles({ ...options, distro: 'Ubuntu" & calc' }), { message: 'Invalid WSL distribution name: Ubuntu" & calc' });
 	// The paths go into a batch file: quotes, variables, line breaks and cmd operators would change what it runs.
 	for (const unsafe of ['/usr/bin/no"de', "/usr/%PATH%/node", "/usr/bin/node\r\ncalc", "/usr/bin/node\ncalc", "/a^b", "/a&calc", "/a|calc", "/a<b", "/a>b"]) {
 		assert.throws(() => nativeHostFiles({ ...options, distro: "Ubuntu", nodePath: unsafe }), { message: `Unsafe path for the native host: ${unsafe}` }, unsafe);
 		assert.throws(() => nativeHostFiles({ ...options, distro: "Ubuntu", hostScript: unsafe }), { message: `Unsafe path for the native host: ${unsafe}` }, unsafe);
+		assert.throws(() => nativeHostFiles({ ...options, distro: "Ubuntu", configDir: unsafe }), { message: `Unsafe path for the native host: ${unsafe}` }, unsafe);
 	}
 });
 
+test("hostConfigDir takes the installed --config-dir over the host's own environment, and refuses a bad one", () => {
+	const env = { GENTLE_CHROME_CONFIG_DIR: "/env/gentle-chrome", XDG_CONFIG_HOME: "/xdg" };
+	assert.equal(hostConfigDir(["--config-dir", "/install/config/gentle-chrome"], env, "/home/u"), "/install/config/gentle-chrome");
+	// Chrome may append the caller origin; it is not a config folder.
+	assert.equal(hostConfigDir(["--config-dir", "/bound", "chrome-extension://abc/"], {}, "/home/u"), "/bound");
+	// Without the argument (a helper installed before binding) the host keeps resolving from its environment.
+	assert.equal(hostConfigDir([], env, "/home/u"), "/env/gentle-chrome");
+	assert.equal(hostConfigDir(["chrome-extension://abc/"], { XDG_CONFIG_HOME: "/xdg" }, "/home/u"), "/xdg/gentle-chrome");
+	assert.equal(hostConfigDir([], {}, "/home/u"), "/home/u/.config/gentle-chrome");
+	assert.throws(() => hostConfigDir(["--config-dir"], env, "/home/u"), { message: "--config-dir needs an absolute folder" });
+	assert.throws(() => hostConfigDir(["--config-dir", "relative/dir"], env, "/home/u"), { message: "--config-dir needs an absolute folder" });
+});
+
 /** Runs `node src/host.ts`, writes `input` to its stdin and collects its output. */
-function runHost(dir: string, input: Buffer): Promise<{ code: number | null; stdout: Buffer; stderr: string }> {
+function runHost(dir: string, input: Buffer, args: string[] = []): Promise<{ code: number | null; stdout: Buffer; stderr: string }> {
 	const script = new URL("../src/host.ts", import.meta.url).pathname;
-	const child = spawn(process.execPath, [script], { env: { ...process.env, GENTLE_CHROME_CONFIG_DIR: dir }, stdio: ["pipe", "pipe", "pipe"] });
+	const child = spawn(process.execPath, [script, ...args], { env: { ...process.env, GENTLE_CHROME_CONFIG_DIR: dir }, stdio: ["pipe", "pipe", "pipe"] });
 	const stdout: Buffer[] = [];
 	let stderr = "";
 	child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
@@ -145,4 +165,25 @@ test("the host CLI answers a malformed request with bad request", async () => {
 	const { code, stdout } = await runHost(dir, Buffer.concat([header, body]));
 	assert.equal(code, 0);
 	assert.deepEqual(stdout, encodeMessage({ error: "bad request" }));
+});
+
+test("the host CLI answers from the --config-dir the install wrote, not from its own environment", async () => {
+	const bound = scratch();
+	const own = scratch();
+	const id = newSessionId();
+	writeSessionRecord(bound, { id, name: "private", port: 48741, pid: process.pid });
+	writeSessionRecord(own, { id: newSessionId(), name: "home", port: 48742, pid: process.pid });
+	const { code, stdout, stderr } = await runHost(own, encodeMessage({ type: "discover" }), ["--config-dir", bound]);
+	assert.equal(stderr, "");
+	assert.equal(code, 0);
+	assert.deepEqual(stdout, encodeMessage({ token: loadOrCreateToken(bound), sessions: [{ id, name: "private", port: 48741 }] }));
+});
+
+test("the host CLI answers a bad --config-dir with a framed host error and the reason on stderr", async () => {
+	const dir = scratch();
+	const { code, stdout, stderr } = await runHost(dir, encodeMessage({ type: "discover" }), ["--config-dir", "relative"]);
+	assert.equal(code, 0);
+	assert.deepEqual(stdout, encodeMessage({ error: "host error" }));
+	assert.equal(stderr, "gentle-shell-host: --config-dir needs an absolute folder\n");
+	assert.deepEqual(readdirSync(dir), []);
 });

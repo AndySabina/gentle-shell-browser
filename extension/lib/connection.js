@@ -136,6 +136,11 @@ export class Connection {
 				socket.send(JSON.stringify({ kind: "auth", proof }));
 				return;
 			}
+			// Arrived right behind the welcome, before the stage changed: the session's first call.
+			if (stage === "done") {
+				if (safeKind(text) !== "ping") peer.receive(text);
+				return;
+			}
 			if (stage === "welcome" && message?.kind === "welcome") {
 				stage = "done";
 				this.peer = peer;

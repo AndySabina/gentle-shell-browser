@@ -11,7 +11,8 @@
 		"48": "icons/icon-48.png",
 		"128": "icons/icon-128.png"
 	},
-	"permissions": ["debugger", "tabs", "tabGroups", "storage", "alarms", "nativeMessaging"],
+	"permissions": ["debugger", "tabs", "tabGroups", "storage", "alarms", "nativeMessaging", "scripting"],
+	"host_permissions": ["https://web.whatsapp.com/*"],
 	"background": {
 		"service_worker": "background.js",
 		"type": "module"

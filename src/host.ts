@@ -60,15 +60,33 @@ export function handleRequest(request: unknown, dir: string): HostReply {
 	return { token, sessions };
 }
 
+/**
+ * The config folder the host reads. Install writes the session's folder into
+ * the .bat as `--config-dir <dir>`, because Chrome starts the host with the
+ * user's normal environment, which a private Gentle Shell layout does not
+ * share. A host installed without it resolves the folder from its environment.
+ */
+export function hostConfigDir(args: string[], env: Record<string, string | undefined>, home: string): string {
+	const at = args.indexOf("--config-dir");
+	if (at === -1) return configDir(env, home);
+	const dir = args[at + 1];
+	if (!dir?.startsWith("/")) throw new Error("--config-dir needs an absolute folder");
+	return dir;
+}
+
 /** The host manifest Chrome reads from the registry path, and the .bat it points at. */
-export function nativeHostFiles(options: { nodePath: string; hostScript: string; extensionId: string; hostDirWindows: string; distro: string }): {
+export function nativeHostFiles(options: { nodePath: string; hostScript: string; extensionId: string; hostDirWindows: string; distro: string; configDir: string }): {
 	manifest: { name: string; description: string; path: string; type: "stdio"; allowed_origins: string[] };
 	bat: string;
 } {
 	// wsl.exe keeps quotes as part of the -d value, so the name goes unquoted.
 	if (options.distro && !/^[A-Za-z0-9._-]+$/.test(options.distro)) throw new Error(`Invalid WSL distribution name: ${options.distro}`);
 	// Quoted inside a batch file: a quote, %variable%, line break or cmd operator would change what it runs.
-	for (const path of [options.nodePath, options.hostScript]) if (/["%\r\n^&|<>]/.test(path)) throw new Error(`Unsafe path for the native host: ${path}`);
+	for (const path of [options.nodePath, options.hostScript, options.configDir]) if (/["%\r\n^&|<>]/.test(path)) throw new Error(`Unsafe path for the native host: ${path}`);
+	// The folder is the last quoted argument: a trailing backslash would escape its closing quote.
+	if (options.configDir.endsWith("\\")) throw new Error(`Unsafe path for the native host: ${options.configDir}`);
+	// The host starts in a Windows working folder, where a relative folder means something else.
+	if (!options.configDir.startsWith("/")) throw new Error(`Native host config folder must be an absolute path: ${options.configDir}`);
 	const distro = options.distro ? `-d ${options.distro} ` : "";
 	return {
 		manifest: {
@@ -79,7 +97,7 @@ export function nativeHostFiles(options: { nodePath: string; hostScript: string;
 			allowed_origins: [`chrome-extension://${options.extensionId}/`],
 		},
 		// Full path: Chrome started from WSL may hand the host a PATH without System32.
-		bat: `@echo off\r\n%SystemRoot%\\System32\\wsl.exe ${distro}-e "${options.nodePath}" "${options.hostScript}"\r\n`,
+		bat: `@echo off\r\n%SystemRoot%\\System32\\wsl.exe ${distro}-e "${options.nodePath}" "${options.hostScript}" --config-dir "${options.configDir}"\r\n`,
 	};
 }
 
@@ -103,7 +121,7 @@ function serve(): void {
 		}
 		if (messages.length === 0) return;
 		try {
-			reply(handleRequest(messages[0], configDir(process.env, homedir())));
+			reply(handleRequest(messages[0], hostConfigDir(process.argv.slice(2), process.env, homedir())));
 		} catch (error) {
 			process.stderr.write(`gentle-shell-host: ${error instanceof Error ? error.message : String(error)}\n`);
 			reply({ error: "host error" });

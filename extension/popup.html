@@ -21,6 +21,7 @@
 				<input id="enabled" type="checkbox" />
 				<span>Connect to Gentle Shell sessions</span>
 			</label>
+			<ul id="session-list"></ul>
 			<p id="no-sessions" class="hint" hidden>No Gentle Shell session is running. Start Gentle Shell; it connects on its own.</p>
 		</section>
 
@@ -48,6 +49,19 @@
 				<ul id="rule-list"></ul>
 				<p id="no-rules" class="hint">None yet. Choose "Always allow" or "Always deny" when Gentle Shell asks.</p>
 			</div>
+		</section>
+
+		<section id="watch">
+			<strong>WhatsApp watch</strong>
+			<p class="hint">While on, a new message from a chat on the list starts the session, and it answers in that chat on its own.</p>
+			<div id="watch-sessions" class="watch-sessions"></div>
+			<p id="no-watch" class="hint" hidden>Open WhatsApp Web in a Gentle Shell tab group to watch it.</p>
+			<ul id="allow-list"></ul>
+			<p id="no-allowed" class="hint">No chat on the list yet: nothing rings.</p>
+			<form id="allow-form" class="row">
+				<input id="allow-name" type="text" maxlength="100" placeholder="Chat name, as WhatsApp shows it" aria-label="Chat name" />
+				<button type="submit" class="secondary">Add</button>
+			</form>
 		</section>
 
 		<p id="error" class="error" hidden></p>

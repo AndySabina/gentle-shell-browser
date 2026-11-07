@@ -313,3 +313,51 @@ async function waitUntil(condition: () => boolean, timeoutMs = 2000): Promise<vo
 		await new Promise((resolve) => setTimeout(resolve, 5));
 	}
 }
+
+test("a session that calls the extension the moment it connects gets an answer, and the connection is trusted", async () => {
+	let bridge: Awaited<ReturnType<typeof startBridge>> | undefined;
+	const answers: unknown[] = [];
+	bridge = await startBridge({
+		token: TOKEN,
+		port: 0,
+		sessionId: SESSION,
+		handlers: {},
+		// As Gentle Shell does on connect: ask the extension right away.
+		onConnectionChange: (info) => {
+			if (info) void bridge!.call("getWatch", {}).then((answer) => answers.push(answer), (error) => answers.push(String(error)));
+		},
+	});
+	const { connection, states } = extension({ getWatch: () => ({ on: false }) });
+	try {
+		connection.open({ port: bridge.port, token: TOKEN, sessionId: SESSION });
+		await waitUntil(() => answers.length > 0);
+		assert.deepEqual(answers, [{ on: false }]);
+		assert.deepEqual(states, ["connecting", "connected"]);
+	} finally {
+		connection.close();
+		await bridge.close();
+	}
+});
+
+test("a message right behind the welcome is served, not taken as a failed handshake", async () => {
+	const server = await fakeServer((socket, message) => {
+		if (message.kind === "hello") {
+			const proof = createHmac("sha256", TOKEN).update(`gentle-chrome/server\n${message.clientNonce}\nnonce\n${SESSION}`).digest("base64url");
+			socket.send(JSON.stringify({ kind: "challenge", sessionId: SESSION, serverNonce: "nonce", proof }));
+		}
+		if (message.kind === "auth") {
+			socket.send(JSON.stringify({ kind: "welcome" }));
+			socket.send(JSON.stringify({ kind: "req", id: 1, method: "getWatch", params: {} }));
+		}
+	});
+	const { connection, states } = extension({ getWatch: () => ({ on: true }) });
+	try {
+		connection.open({ port: server.port, token: TOKEN, sessionId: SESSION });
+		await waitUntil(() => server.received.some((text) => JSON.parse(text).id === 1));
+		assert.deepEqual(states, ["connecting", "connected"]);
+		assert.deepEqual(JSON.parse(server.received.at(-1)!), { kind: "res", id: 1, ok: true, result: { on: true } });
+	} finally {
+		connection.close();
+		await server.close();
+	}
+});

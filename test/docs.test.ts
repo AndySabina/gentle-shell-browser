@@ -68,6 +68,20 @@ test("the README and the guide name only the browser tools that exist, and list 
 	}
 });
 
+test("the README and the guide add the package with the private layout's pi", () => {
+	for (const path of [readmePath, guidePath]) {
+		assert.ok(read(path).includes('~/.local/share/gentle-shell/install/bin/pi install "$PWD"'), `${relative(root, path)} names the private pi install command`);
+	}
+});
+
+test("the README and the guide name `gentle-shell install` and ~/.gentle-shell only as the older layout", () => {
+	// In the private layout `gentle-shell install` is the Gentle Shell installer and rejects a package path.
+	for (const path of [readmePath, guidePath]) {
+		const lines = read(path).split("\n").filter((line) => line.includes("gentle-shell install") || line.includes("~/.gentle-shell/"));
+		for (const line of lines) assert.match(line, /\b(older|legacy)\b/i, `${relative(root, path)}: ${line}`);
+	}
+});
+
 test("docs, README and the capture script carry no personal data", () => {
 	// The project's public repository URL is the only allowed mention of the owner's account.
 	const allowed = /github\.com\/[A-Za-z0-9-]+\/gentle-shell-browser/g;

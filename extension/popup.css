@@ -233,7 +233,9 @@ label.level strong {
 	gap: 6px;
 }
 
-#rule-list {
+#rule-list,
+#allow-list,
+#session-list {
 	display: grid;
 	gap: 4px;
 	margin: 0;
@@ -242,7 +244,9 @@ label.level strong {
 	font-size: 12px;
 }
 
-#rule-list li {
+#rule-list li,
+#allow-list li,
+#session-list li {
 	display: flex;
 	gap: 6px;
 	align-items: center;
@@ -251,13 +255,16 @@ label.level strong {
 	background: var(--surface1);
 }
 
-#rule-list .rule-text {
+#rule-list .rule-text,
+#allow-list .rule-text,
+#session-list .rule-text {
 	flex: 1;
 	min-width: 0;
 	overflow-wrap: anywhere;
 }
 
-#rule-list .tag {
+#rule-list .tag,
+#session-list .tag {
 	flex: none;
 	padding: 0 8px;
 	border-radius: var(--radius-pill);
@@ -266,15 +273,34 @@ label.level strong {
 	font-size: 11px;
 }
 
-#rule-list li[data-decision="deny"] .tag {
+#rule-list li[data-decision="deny"] .tag,
+#session-list li:is([data-state="unauthorized"], [data-state="untrusted"]) .tag {
 	border-color: var(--red);
 	color: var(--red);
 }
 
-#rule-list button.remove {
+#rule-list button.remove,
+#allow-list button.remove {
 	flex: none;
 	padding: 1px 8px;
 	font-size: 11px;
+}
+
+.watch-sessions {
+	display: grid;
+	gap: 4px;
+}
+
+#allow-form input {
+	flex: 1;
+	min-width: 0;
+	padding: 4px 8px;
+	border: 1px solid var(--surface2);
+	border-radius: var(--radius-sm);
+	background: var(--surface0);
+	color: var(--text);
+	font: inherit;
+	font-size: 12px;
 }
 
 textarea {

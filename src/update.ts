@@ -136,12 +136,26 @@ export function registersByDefault(hostDir: string): boolean {
 	return /^\/mnt\/[a-z]\//.test(hostDir);
 }
 
+/**
+ * The distribution in the Windows path of this distribution's root, as `wslpath -w /`
+ * prints it (\\wsl.localhost\<name>\ or \\wsl$\<name>): the one actually running,
+ * unlike /etc/os-release or the default distribution. "" when the path names none.
+ */
+function distroFromRoot(root: string): string {
+	return /^\\\\wsl(?:\.localhost|\$)\\([^\\]+)\\?$/i.exec(root)?.[1] ?? "";
+}
+
+const UNKNOWN_DISTRO = "could not tell which WSL distribution this is; set WSL_DISTRO_NAME to its name (wsl.exe -l -q lists them) and run again.";
+
 export interface InstallDeps {
 	/** Absolute WSL path of node; defaults to the running one. */
 	nodePath?: string;
 	/** Absolute WSL path of src/host.ts; defaults to this checkout's. */
 	hostScript?: string;
-	/** WSL distribution the .bat starts; defaults to WSL_DISTRO_NAME. */
+	/**
+	 * WSL distribution the .bat starts; defaults to WSL_DISTRO_NAME, then to the one
+	 * `windowsPath("/")` names (a Gentle Shell session does not pass WSL_DISTRO_NAME).
+	 */
 	distro?: string;
 	windowsPath?(path: string): string;
 	/** The registry key's current default value. */
@@ -182,6 +196,21 @@ export function installExtension(options: { sourceDir: string; targetDir: string
 	checkTarget(options.sourceDir, targetDir);
 	const hostDir = `${targetDir}-host`;
 	checkHostDir(hostDir);
+	// Built before anything is written, so a path the helper cannot use leaves everything untouched.
+	const toWindows = deps.windowsPath ?? windowsPath;
+	const hostDirWindows = toWindows(hostDir);
+	const distro = deps.distro ?? (process.env.WSL_DISTRO_NAME || distroFromRoot(toWindows("/")));
+	// Without -d, wsl.exe starts the default distribution, which may not hold this checkout or this Node.
+	if (!distro && registersByDefault(hostDir)) throw new Error(UNKNOWN_DISTRO);
+	const { manifest, bat } = nativeHostFiles({
+		nodePath: deps.nodePath ?? process.execPath,
+		hostScript: deps.hostScript ?? HOST_SCRIPT,
+		extensionId: EXTENSION_ID,
+		hostDirWindows,
+		distro,
+		// Chrome starts the helper with its own environment, so it is told this folder explicitly.
+		configDir: resolve(options.configDir),
+	});
 	const build = buildId(options.sourceDir);
 	mkdirSync(targetDir, { recursive: true });
 	const generated = new Set([BUILD_FILE, BUILD_MODULE].map((name) => join(resolve(options.sourceDir), name)));
@@ -192,14 +221,6 @@ export function installExtension(options: { sourceDir: string; targetDir: string
 	const record = join(options.configDir, TARGET_FILE);
 	writeFileSync(record, `${targetDir}\n`, { mode: 0o600 });
 	chmodSync(record, 0o600);
-	const hostDirWindows = (deps.windowsPath ?? windowsPath)(hostDir);
-	const { manifest, bat } = nativeHostFiles({
-		nodePath: deps.nodePath ?? process.execPath,
-		hostScript: deps.hostScript ?? HOST_SCRIPT,
-		extensionId: EXTENSION_ID,
-		hostDirWindows,
-		distro: deps.distro ?? process.env.WSL_DISTRO_NAME ?? "",
-	});
 	mkdirSync(hostDir, { recursive: true });
 	writeFileSync(join(hostDir, HOST_MANIFEST), `${JSON.stringify(manifest, null, 2)}\n`);
 	writeFileSync(join(hostDir, HOST_BAT), bat);
@@ -223,6 +244,56 @@ export function recordedTarget(dir: string): string | undefined {
 		if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
 		throw error;
 	}
+}
+
+/**
+ * Whether the helper recorded for `dir` reads `dir`, from the files the last
+ * install wrote. It says nothing about whether Chrome runs that helper.
+ */
+export type HostBinding =
+	| { state: "absent" }
+	| { state: "bound"; hostDir: string }
+	| { state: "mismatched"; hostDir: string; boundTo: string }
+	/** A helper written before installs recorded the folder: it uses its own environment's. */
+	| { state: "unbound"; hostDir: string }
+	/** The Node the helper starts is gone (a Gentle Shell reinstall or Node upgrade removed it), so Chrome cannot start it. */
+	| { state: "stale"; hostDir: string; nodePath: string }
+	| { state: "unknown"; hostDir?: string; reason: string };
+
+function samePath(a: string, b: string): boolean {
+	const real = (path: string) => {
+		try {
+			return realpathSync(path);
+		} catch {
+			return resolve(path);
+		}
+	};
+	return real(a) === real(b);
+}
+
+export function hostBinding(dir: string): HostBinding {
+	let target: string | undefined;
+	try {
+		target = recordedTarget(dir);
+	} catch (error) {
+		return { state: "unknown", reason: error instanceof Error ? error.message : String(error) };
+	}
+	if (!target) return { state: "absent" };
+	const hostDir = `${target}-host`;
+	const batPath = join(hostDir, HOST_BAT);
+	let bat: string;
+	try {
+		bat = readFileSync(batPath, "utf8");
+	} catch (error) {
+		const reason = (error as NodeJS.ErrnoException).code === "ENOENT" ? `${batPath} is missing` : error instanceof Error ? error.message : String(error);
+		return { state: "unknown", hostDir, reason };
+	}
+	// The .bat pins the Node that ran the install; a missing one stops the helper before any folder matters.
+	const nodePath = / -e "([^"]+)"/.exec(bat)?.[1];
+	if (nodePath && !existsSync(nodePath)) return { state: "stale", hostDir, nodePath };
+	const boundTo = / --config-dir "([^"]+)"\r?$/m.exec(bat)?.[1];
+	if (!boundTo) return { state: "unbound", hostDir };
+	return samePath(boundTo, dir) ? { state: "bound", hostDir } : { state: "mismatched", hostDir, boundTo };
 }
 
 // scripts/install-extension.sh resolves the folder, then runs: node src/update.ts install <wsl-path>

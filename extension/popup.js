@@ -11,6 +11,17 @@ const HELPER_LABELS = {
 	invalid: "Helper error",
 };
 
+/** A session's connection state, in words; untrusted and unauthorized stop retrying until the switch is turned Off and On. */
+const SESSION_LABELS = {
+	connected: "connected",
+	connecting: "connecting…",
+	waiting: "retrying…",
+	off: "off",
+	replaced: "taken by another Chrome",
+	unauthorized: "refused: turn Off and On",
+	untrusted: "untrusted: turn Off and On",
+};
+
 async function send(type, extra = {}) {
 	const response = await chrome.runtime.sendMessage({ type, ...extra });
 	if (!response?.ok) throw new Error(response?.error ?? "No answer from the extension");
@@ -40,6 +51,21 @@ function render(state) {
 	$("helper").textContent = state.helper.error ?? "";
 	$("enabled").checked = state.enabled;
 	$("no-sessions").hidden = state.helper.state !== "ok" || state.sessions.length > 0;
+	// Each session's own state, so a session that stopped retrying is visible.
+	$("session-list").replaceChildren(
+		...state.sessions.map((session) => {
+			const item = document.createElement("li");
+			const text = document.createElement("span");
+			text.className = "rule-text";
+			text.textContent = session.name;
+			const tag = document.createElement("span");
+			tag.className = "tag";
+			tag.textContent = SESSION_LABELS[session.state] ?? session.state;
+			item.dataset.state = session.state;
+			item.append(text, tag);
+			return item;
+		}),
+	);
 	$("stop").hidden = connected === 0;
 }
 
@@ -104,9 +130,74 @@ for (const input of document.querySelectorAll('input[name="level"]')) {
 $("clear-rules").addEventListener("click", () => {
 	if (confirm("Clear every saved decision? Remember mode will ask again for every site and action type.")) void changeSettings(() => send("clearRules"));
 });
+const WATCH_WARNING = (name) =>
+	`Switch the WhatsApp watch on for "${name}"?\n\nA new message from a chat on the list will start that session on its own, and it will answer in that chat without asking you first. Replies still follow the permission mode.`;
+
+function renderWatch(view) {
+	$("watch-sessions").replaceChildren(
+		...view.sessions.map((session) => {
+			const label = document.createElement("label");
+			label.className = "switch";
+			const input = document.createElement("input");
+			input.type = "checkbox";
+			input.checked = session.on;
+			input.addEventListener("change", () => {
+				// Answering on its own writes to other people: the user confirms first.
+				if (input.checked && !confirm(WATCH_WARNING(session.name))) return void changeWatch(() => send("watchState"));
+				void changeWatch(() => send("setWatch", { sessionId: session.id, on: input.checked }));
+			});
+			const text = document.createElement("span");
+			text.textContent = `Answer new messages · ${session.name}`;
+			label.append(input, text);
+			return label;
+		}),
+	);
+	$("no-watch").hidden = view.sessions.length > 0;
+	$("allow-list").replaceChildren(
+		...view.allowed.map((chat) => {
+			const item = document.createElement("li");
+			const text = document.createElement("span");
+			text.className = "rule-text";
+			text.textContent = chat;
+			const remove = document.createElement("button");
+			remove.className = "secondary remove";
+			remove.textContent = "Remove";
+			remove.title = `Stop answering ${chat}`;
+			remove.addEventListener("click", () => changeWatch(() => send("removeChat", { chat })));
+			item.append(text, remove);
+			return item;
+		}),
+	);
+	$("no-allowed").hidden = view.allowed.length > 0;
+}
+
+async function changeWatch(action) {
+	showError(undefined);
+	try {
+		renderWatch(await action());
+	} catch (error) {
+		showError(error);
+	}
+}
+
+$("allow-form").addEventListener("submit", (event) => {
+	event.preventDefault();
+	const chat = $("allow-name").value;
+	void changeWatch(async () => {
+		const view = await send("allowChat", { chat });
+		$("allow-name").value = "";
+		return view;
+	});
+});
+
 chrome.runtime.onMessage.addListener((message) => {
-	if (message?.type === "state-changed") void run(() => send("state"));
+	if (message?.type === "state-changed") {
+		void run(() => send("state"));
+		void changeWatch(() => send("watchState"));
+	}
+	if (message?.type === "watch-changed") void changeWatch(() => send("watchState"));
 });
 
 void run(() => send("state"));
 void changeSettings(() => send("settings"));
+void changeWatch(() => send("watchState"));
