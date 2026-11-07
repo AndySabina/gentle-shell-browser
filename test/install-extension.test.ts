@@ -49,7 +49,7 @@ function profileCommand(profile: string): string {
 function setup() {
 	const dir = mkdtempSync(join(tmpdir(), "gentle-chrome-script-"));
 	scratches.push(dir);
-	const paths = { bin: join(dir, "bin"), drive: join(dir, "c"), home: join(dir, "home"), config: join(dir, "config") };
+	const paths = { bin: join(dir, "bin"), drive: join(dir, "c"), home: join(dir, "home"), config: join(dir, "config"), durable: join(dir, "durable") };
 	mkdirSync(paths.drive);
 	mkdirSync(paths.home);
 	executable(join(paths.bin, "wslpath"), WSLPATH);
@@ -60,7 +60,7 @@ function setup() {
 /** Runs the script with only the given environment: no inherited PATH entries, no WSL_DISTRO_NAME unless passed. */
 function run(paths: ReturnType<typeof setup>, args: string[], env: Record<string, string> = {}) {
 	const result = spawnSync("bash", [script, ...args], {
-		env: { PATH: `${paths.bin}:/usr/bin:/bin`, HOME: paths.home, GENTLE_CHROME_CONFIG_DIR: paths.config, FAKE_DRIVE: paths.drive, ...env },
+		env: { PATH: `${paths.bin}:/usr/bin:/bin`, HOME: paths.home, GENTLE_CHROME_CONFIG_DIR: paths.config, GENTLE_CHROME_DURABLE_DIR: paths.durable, FAKE_DRIVE: paths.drive, ...env },
 		encoding: "utf8",
 		// A fake that waits for input must fail the test, not leave it running.
 		timeout: 30_000,
@@ -91,6 +91,7 @@ test("without cmd.exe on PATH the script finds it in the Windows System32 folder
 	assert.match(stdout, /^Copied Gentle Shell Browser /m);
 	assert.ok(existsSync(join(target, "manifest.json")));
 	assert.equal(readFileSync(join(paths.config, "extension-target"), "utf8"), `${target}\n`);
+	assert.equal(readFileSync(join(paths.durable, "extension-target"), "utf8"), `${target}\n`);
 	assertBat(target, "Ubuntu", paths.config);
 });
 

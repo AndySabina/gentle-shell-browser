@@ -1,7 +1,7 @@
 import { type Bridge, type ExtensionInfo, type Handler, startBridge } from "./bridge.ts";
 import { listenOnFreePort, newSessionId, normalizeSessionName, removeSessionRecord, writeSessionRecord } from "./sessions.ts";
 import { loadOrCreateToken } from "./token.ts";
-import { buildId, type HostBinding, hostBinding, installExtension, REPO_EXTENSION_DIR, recordedTarget } from "./update.ts";
+import { buildId, durableConfigDir, type HostBinding, hostBinding, installExtension, REPO_EXTENSION_DIR, recordedTarget } from "./update.ts";
 
 const HOST = "127.0.0.1";
 const RELOAD_ATTEMPTS = 10;
@@ -17,7 +17,7 @@ function shellQuote(text: string): string {
  * Which config folder this session uses and whether the installed Chrome
  * helper reads it, from the install's files; Chrome itself is not asked.
  */
-function bindingLine(configDir: string, binding: HostBinding = hostBinding(configDir)): string {
+function bindingLine(configDir: string, binding: HostBinding): string {
 	const fix = `run GENTLE_CHROME_CONFIG_DIR=${shellQuote(configDir)} scripts/install-extension.sh in the gentle-shell-browser folder.`;
 	const detail =
 		binding.state === "bound"
@@ -40,6 +40,8 @@ function updateFailed(reason: unknown): string {
 
 export interface ControllerDeps {
 	configDir: string;
+	/** Where install also records the extension folder, outside Gentle Shell's install; defaults to the real ~/.config/gentle-chrome. */
+	durableDir?: string;
 	/** Listen on exactly this port; when unset, the first free port of the session range. */
 	port?: number;
 	/** The name shown to the user for this session, such as the Pi session name or the folder name. */
@@ -109,7 +111,7 @@ export class BrowserController {
 		const info = this.bridge.connected();
 		const where = `session "${this.name}" (${this.sessionId}) listening on ${HOST}:${this.bridge.port}`;
 		const connection = info ? `Gentle Chrome: ${where}, Chrome connected (extension ${info.version}).` : `Gentle Chrome: ${where}, Chrome not connected; the browser tools appear when it connects.`;
-		return [connection, bindingLine(this.deps.configDir)];
+		return [connection, bindingLine(this.deps.configDir, hostBinding(this.deps.configDir, this.durableDir()))];
 	}
 
 	/** `/browser update`: copies the extension to its recorded folder now and reloads it if Chrome runs another build. */
@@ -118,12 +120,12 @@ export class BrowserController {
 		if (!bridge) return this.status();
 		if (this.updating) return ["Gentle Chrome: an update is already running."];
 		try {
-			const target = recordedTarget(this.deps.configDir);
+			const target = recordedTarget(this.deps.configDir, this.durableDir());
 			if (!target) return [`Gentle Chrome: no extension folder recorded; ${NO_TARGET}`];
 			const build = buildId(this.extensionDir());
 			const from = bridge.connected()?.build;
 			if (from === undefined || from === build) {
-				installExtension({ sourceDir: this.extensionDir(), targetDir: target, configDir: this.deps.configDir });
+				installExtension({ sourceDir: this.extensionDir(), targetDir: target, configDir: this.deps.configDir, durableDir: this.durableDir() });
 				return [from === undefined ? `Gentle Chrome: copied build ${build} to ${target}; Chrome is not connected, so it updates when it connects.` : `Gentle Chrome: the Chrome extension is up to date (${build}).`];
 			}
 			return [(await this.run(target, from, build)) ?? `Gentle Chrome: copied build ${build} to ${target}; Chrome is reloading the extension.`];
@@ -159,7 +161,7 @@ export class BrowserController {
 		this.bridge = bridge;
 		this.deps.setStatus?.("Chrome: waiting");
 		// Nobody reads the start lines, and Chrome fails silently on a helper it cannot start: say so once.
-		const binding = hostBinding(this.deps.configDir);
+		const binding = hostBinding(this.deps.configDir, this.durableDir());
 		if (binding.state === "stale") this.notify(bindingLine(this.deps.configDir, binding));
 		return this.status();
 	}
@@ -209,6 +211,10 @@ export class BrowserController {
 		return this.deps.extensionDir ?? REPO_EXTENSION_DIR;
 	}
 
+	private durableDir(): string {
+		return this.deps.durableDir ?? durableConfigDir();
+	}
+
 	private notify(text: string): void {
 		this.deps.notify?.(text);
 	}
@@ -223,7 +229,7 @@ export class BrowserController {
 		try {
 			const build = buildId(this.extensionDir());
 			if (info.build === build) return;
-			const target = recordedTarget(this.deps.configDir);
+			const target = recordedTarget(this.deps.configDir, this.durableDir());
 			if (!target) {
 				if (!this.outdatedNoticed) this.notify(`Gentle Chrome: the Chrome extension is outdated; ${NO_TARGET}`);
 				this.outdatedNoticed = true;
@@ -247,7 +253,7 @@ export class BrowserController {
 	private async deliver(target: string, from: string, build: string): Promise<string | undefined> {
 		this.notify(`Gentle Chrome: updating the Chrome extension (${from} -> ${build})…`);
 		try {
-			installExtension({ sourceDir: this.extensionDir(), targetDir: target, configDir: this.deps.configDir });
+			installExtension({ sourceDir: this.extensionDir(), targetDir: target, configDir: this.deps.configDir, durableDir: this.durableDir() });
 		} catch (error) {
 			return updateFailed(error);
 		}

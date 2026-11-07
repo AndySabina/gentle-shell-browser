@@ -339,6 +339,8 @@ The popup lists every session with its state. Actions from all sessions run one 
 
 Updates are automatic. When you pull new code, the next time the extension connects with an older build, Gentle Shell copies the new files into the extension's folder and asks it to reload itself as soon as no action is running.
 
+The install records that folder in the session's config folder and also in your real `~/.config/gentle-chrome`, so a Gentle Shell update that replaces its own config folder does not lose it.
+
 To update right away, run `/browser update`.
 
 If it asks for a manual reload (only for copies installed before self-update existed), press the reload icon on the **Gentle Shell Browser** card in `chrome://extensions` once.

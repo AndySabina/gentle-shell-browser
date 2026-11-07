@@ -98,7 +98,7 @@ Without the variable, the script uses `$XDG_CONFIG_HOME/gentle-chrome` or `~/.co
 
 The script refuses a non-empty folder that is not a previous copy (no `manifest.json` named "Gentle Shell Browser"), never deletes anything, and only writes inside the target.
 
-**Updates are automatic.** The script stamps the copy with `build.json` and `build.js` (a hash of the extension's files) and records the folder in `~/.config/gentle-chrome/extension-target`. Whenever the extension connects with another build than your checkout's, Gentle Shell copies the new files into that folder and asks the extension to reload itself as soon as no action is running (it retries every 30 seconds, up to 10 times). `/browser update` does the same on demand. The extension reports the build from `build.js`, which is part of its code: Chrome keeps running the code it cached until the extension reloads, even across browser restarts, so a stale copy reports its old build and gets reloaded.
+**Updates are automatic.** The script stamps the copy with `build.json` and `build.js` (a hash of the extension's files) and records the folder in `~/.config/gentle-chrome/extension-target`. It also records it in your real `~/.config/gentle-chrome` (from the account's home, not `$HOME`), so a Gentle Shell update that replaces its own config folder does not lose it. Whenever the extension connects with another build than your checkout's, Gentle Shell copies the new files into that folder and asks the extension to reload itself as soon as no action is running (it retries every 30 seconds, up to 10 times). `/browser update` does the same on demand. The extension reports the build from `build.js`, which is part of its code: Chrome keeps running the code it cached until the extension reloads, even across browser restarts, so a stale copy reports its old build and gets reloaded.
 
 An extension loaded before self-update existed cannot reload itself: Gentle Shell copies the files and asks you to press the reload icon on the Gentle Shell Browser card in `chrome://extensions` once. After that it updates itself.
 
@@ -159,6 +159,7 @@ The agent sees these tools only while Chrome is connected to its session; until 
 |----------|---------|--------|
 | `GENTLE_CHROME_PORT` | first free of 48733–48832 | Pins this session's port. The extension only connects to ports in 48733–48832. |
 | `GENTLE_CHROME_CONFIG_DIR` | — | Folder holding the token and the session records. |
+| `GENTLE_CHROME_DURABLE_DIR` | your real `~/.config/gentle-chrome` | Second folder where `scripts/install-extension.sh` records the extension folder, outside Gentle Shell's install. |
 | `XDG_CONFIG_HOME` | `~/.config` | Used when the variable above is unset: the token lives in `$XDG_CONFIG_HOME/gentle-chrome/token` (mode 0600), each session's record in `sessions/<id>.json`. |
 
 ## WhatsApp watch
