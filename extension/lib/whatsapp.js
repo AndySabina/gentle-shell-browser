@@ -335,8 +335,11 @@ export class WhatsAppWatch {
 			const key = chatKey(chat.name);
 			// Two chats with an allowed name: either could be someone else's, so neither rings.
 			if (chat.unread === 0 || chat.ambiguous || isTyping(chat) || !allowed.has(key) || before.get(key) === signature(chat)) continue;
-			// A message that already rang, shown unread again, is not new.
-			if (this.isKnown(chat)) continue;
+			// A count that rose from a nonzero count means new messages, whatever their text.
+			const previous = Number(before.get(key));
+			const rose = previous > 0 && chat.unread > previous;
+			// A message that already rang, shown unread again after the chat was read, is not new.
+			if (!rose && this.isKnown(chat)) continue;
 			/** @type {{chat: string, at: string, delivered: boolean, error?: string}} */
 			const ring = { chat: chat.name, at: new Date().toISOString(), delivered: false };
 			try {

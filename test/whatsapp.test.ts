@@ -184,6 +184,17 @@ test("each chat remembers its last 20 rung messages: the same text again does no
 	assert.equal(rings(alpha).length, 22);
 });
 
+test("more unread messages always ring, even when the newest has the same text as an older one", async () => {
+	const { watch, alpha } = setup({ allow: ["Andy"], rows: [row("Andy", "3", "3")] });
+	await watch.setWatch(alpha as any, true);
+	await watch.report(7, [row("Andy", "3", "3")]);
+	await watch.report(7, [row("Andy", "3", "6")]);
+	assert.deepEqual(rings(alpha), [{ chat: "Andy", unread: 6, preview: "3", tabId: 7 }]);
+	await watch.report(7, [row("Andy", "ok", "7")]);
+	await watch.report(7, [row("Andy", "ok", "8")]);
+	assert.deepEqual(rings(alpha).map((ring) => ring.unread), [6, 7, 8]);
+});
+
 test("a message unread when the watch started does not ring when WhatsApp shows it unread again", async () => {
 	const { watch, alpha } = setup({ allow: ["Mamá"], rows: [row("Mamá", "viejo", "1")] });
 	await watch.setWatch(alpha as any, true);
