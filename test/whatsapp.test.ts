@@ -25,13 +25,21 @@ type Tab = { tabId: number; url: string };
 
 function fakeSession(id: string, tabs: Tab[], state = "connected") {
 	const calls: { method: string; params: any }[] = [];
+	const opened: string[] = [];
 	return {
 		id,
 		name: id,
 		calls,
+		opened,
 		group: {
 			tabs: async () => tabs.map((tab) => ({ ...tab, title: "", active: false })),
 			contains: async (tabId: number) => tabs.some((tab) => tab.tabId === tabId),
+			openTab: async (url: string) => {
+				opened.push(url);
+				const tabId = 100 + opened.length;
+				tabs.push({ tabId, url });
+				return { tabId, groupId: 1 };
+			},
 		},
 		connection: {
 			state,
@@ -132,7 +140,7 @@ test("a new message from an allowed chat rings the session whose group holds the
 });
 
 test("a chat that was read rings again on its next message", async () => {
-	const { watch, alpha } = setup({ allow: ["Mamá"] });
+	const { watch, alpha } = setup({ allow: ["Mamá"], rows: [row("Mamá", "antes")] });
 	await watch.setWatch(alpha as any, true);
 	await watch.report(7, [row("Mamá", "hola", "1")]);
 	await watch.report(7, [row("Mamá", "respuesta del agente")]);
@@ -356,7 +364,7 @@ test("reports and tab loads wait for initial discovery", async () => {
 	let live = false;
 	const ready = new Promise<void>((resolve) => { discover = () => { live = true; resolve(); }; });
 	const injected: number[] = [];
-	const watch = new WhatsAppWatch({ local: memoryStorage({ whatsappAllow: ["Mamá"] }), session: memoryStorage({ whatsappWatch: { alpha: true } }), sessions: { live: () => live ? [alpha] as any : [] }, read: async (id: number) => { injected.push(id); return []; }, ready: () => ready });
+	const watch = new WhatsAppWatch({ local: memoryStorage({ whatsappAllow: ["Mamá"] }), session: memoryStorage({ whatsappWatch: { alpha: true } }), sessions: { live: () => live ? [alpha] as any : [] }, read: async (id: number) => { injected.push(id); return [row("Mamá", "antes")]; }, ready: () => ready });
 	const loaded = watch.tabLoaded(7, WA);
 	discover();
 	await loaded;
@@ -410,4 +418,64 @@ test("switching on records the read of the chat list, before any report", async 
 	const state: any = await watch.setWatch(alpha as any, true);
 	assert.equal(state.lastRead.chats, 2);
 	assert.deepEqual(state.lastRead.allowed, [{ name: "Samantha", unread: 1 }]);
+});
+
+test("switching on in a group without WhatsApp opens one WhatsApp Web tab there, and nothing anywhere else", async () => {
+	const { watch, alpha, beta } = setup({ tabs: [{ tabId: 6, url: "https://example.com/" }] });
+	const state: any = await watch.setWatch(alpha as any, true);
+	assert.deepEqual(alpha.opened, [WA]);
+	assert.equal(state.openedWhatsApp, true);
+	assert.equal(state.whatsappTabs, 1);
+	assert.deepEqual(beta.opened, []);
+	// Off never opens; on again with the tab there opens nothing.
+	await watch.setWatch(alpha as any, false);
+	assert.equal(((await watch.setWatch(alpha as any, true)) as any).openedWhatsApp, undefined);
+	assert.deepEqual(alpha.opened, [WA]);
+});
+
+test("a WhatsApp tab Chrome refuses to open is reported, and the watch is on all the same", async () => {
+	const { watch, alpha } = setup({ tabs: [] });
+	alpha.group.openTab = async () => {
+		throw new Error("No current window");
+	};
+	const state: any = await watch.setWatch(alpha as any, true);
+	assert.equal(state.on, true);
+	assert.equal(state.openWhatsAppError, "No current window");
+	assert.equal(state.openedWhatsApp, undefined);
+	assert.equal(await watch.watching("session-alpha"), true);
+});
+
+test("switching on with a WhatsApp tab already in the group, or switching off, opens nothing", async () => {
+	const { watch, alpha, beta } = setup();
+	assert.equal(((await watch.setWatch(alpha as any, true)) as any).openedWhatsApp, undefined);
+	await watch.setWatch(alpha as any, false);
+	await watch.setWatch(beta as any, false);
+	assert.deepEqual(alpha.opened, []);
+	assert.deepEqual(beta.opened, []);
+});
+
+test("a tab still loading (no chats yet) does not ring for messages already unread when its chat list appears", async () => {
+	const { watch, alpha } = setup({ allow: ["Mamá", "Andy"], tabs: [] });
+	await watch.setWatch(alpha as any, true);
+	const tabId = 101;
+	// The new tab loads: WhatsApp Web shows no chat list yet.
+	await watch.tabLoaded(tabId, WA);
+	await watch.report(tabId, []);
+	await watch.report(tabId, [row("Mamá", "viejo", "2"), row("Andy", "de antes", "1")]);
+	assert.deepEqual(rings(alpha), []);
+	await watch.report(tabId, [row("Mamá", "nuevo", "3"), row("Andy", "de antes", "1")]);
+	assert.deepEqual(rings(alpha), [{ chat: "Mamá", unread: 3, preview: "nuevo", tabId }]);
+	// What was unread when the list appeared counts as handled.
+	await watch.report(tabId, [row("Mamá", "nuevo", "3"), row("Andy", "respuesta")]);
+	await watch.report(tabId, [row("Mamá", "nuevo", "3"), row("Andy", "de antes", "1")]);
+	assert.equal(rings(alpha).length, 1);
+});
+
+test("switching on while WhatsApp Web is still loading does not take the empty list as the baseline", async () => {
+	const { watch, alpha } = setup({ allow: ["Mamá"] });
+	await watch.setWatch(alpha as any, true);
+	await watch.report(7, [row("Mamá", "viejo", "1")]);
+	assert.deepEqual(rings(alpha), []);
+	await watch.report(7, [row("Mamá", "nuevo", "2")]);
+	assert.equal(rings(alpha).length, 1);
 });

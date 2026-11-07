@@ -190,7 +190,7 @@ new message in an allowed chat ─► the extension notices it (no AI, no tokens
 
 1. Ask the agent to open `https://web.whatsapp.com/`, so the WhatsApp tab is in the session's group.
 2. Add the chats it may answer: `/browser watch allow <chat name>`, or type the name in the popup's **WhatsApp watch** box and press **Add**. Only these chats ring; every other chat is ignored.
-3. Switch it on: `/browser watch on`, or the popup's **Answer new messages · \<session\>** switch. Both ask you to confirm first, because the agent will write to other people for you. While it is on, the status bar shows **WhatsApp: watching**.
+3. Switch it on: `/browser watch on`, or the popup's **Answer new messages · \<session\>** switch. Both ask you to confirm first, because the agent will write to other people for you. While it is on, the status bar shows **WhatsApp: watching**. If the session's group has no WhatsApp tab (say, a new session), switching it on opens WhatsApp Web there; log in if it asks for the QR code. Messages already unread in that tab do not ring.
 4. Switch it off the same way: `/browser watch off` or the popup switch. Either side shows the other's change at once.
 
 Good to know:

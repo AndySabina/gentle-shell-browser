@@ -140,3 +140,20 @@ test("on connect the status line reads the extension's switch; off when disconne
 test("the wake message asks the agent to close the chat after replying, so the next message can ring", () => {
 	assert.match(wakeMessage({ chat: "Andy", unread: 1, preview: "hola", tabId: 7 }), /press Escape to close the chat/);
 });
+
+test("/browser watch on says when it opened WhatsApp Web in the session's group", async () => {
+	const ctl = fakeController({ getWatch: () => state(false), setWatch: () => ({ ...state(true), openedWhatsApp: true }) });
+	assert.deepEqual(await watchCommand(ctl, ["on"], context(true)), [
+		"Gentle Chrome: WhatsApp watch is on for this session.",
+		"Opened WhatsApp Web in this session's group: if WhatsApp asks for the QR code, log in there.",
+		"Allowed chats: Mamá.",
+		"The WhatsApp tab has not reported its chat list yet.",
+	]);
+});
+
+test("/browser watch on says when it could not open WhatsApp Web, with the watch on", async () => {
+	const ctl = fakeController({ getWatch: () => state(false), setWatch: () => ({ ...state(true), openWhatsAppError: "No current window" }) });
+	const lines = await watchCommand(ctl, ["on"], context(true));
+	assert.equal(lines[0], "Gentle Chrome: WhatsApp watch is on for this session.");
+	assert.ok(lines.includes("Could not open WhatsApp Web in this session's group (No current window): open it there yourself so the watch can read it."));
+});
