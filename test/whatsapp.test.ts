@@ -143,6 +143,71 @@ test("a chat that was read rings again on its next message", async () => {
 	);
 });
 
+test("messages already rung never ring again after the agent replied, even when WhatsApp shows them unread again", async () => {
+	const { watch, alpha } = setup({ allow: ["Mamá"] });
+	await watch.setWatch(alpha as any, true);
+	await watch.report(7, [row("Mamá", "hola")]);
+	await watch.report(7, [row("Mamá", "uno", "1")]);
+	await watch.report(7, [row("Mamá", "dos", "2")]);
+	await watch.report(7, [row("Mamá", "tres", "3")]);
+	await watch.report(7, [row("Mamá", "respuesta del agente")]);
+	await watch.report(7, [row("Mamá", "uno", "1")]);
+	await watch.report(7, [row("Mamá", "respuesta del agente")]);
+	await watch.report(7, [row("Mamá", "tres", "3")]);
+	await watch.report(7, [row("Mamá", "dos", "1")]);
+	assert.deepEqual(
+		rings(alpha).map((ring) => ring.preview),
+		["uno", "dos", "tres"],
+	);
+	await watch.report(7, [row("Mamá", "respuesta del agente")]);
+	await watch.report(7, [row("Mamá", "nuevo", "1")]);
+	assert.deepEqual(rings(alpha).at(-1), { chat: "Mamá", unread: 1, preview: "nuevo", tabId: 7 });
+	assert.equal(rings(alpha).length, 4);
+});
+
+test("each chat remembers its last 20 rung messages: the same text again does not ring, an older one does", async () => {
+	const { watch, alpha } = setup({ allow: ["Mamá"] });
+	await watch.setWatch(alpha as any, true);
+	const ringOnce = async (preview: string) => {
+		await watch.report(7, [row("Mamá", "respuesta del agente")]);
+		await watch.report(7, [row("Mamá", preview, "1")]);
+	};
+	await watch.report(7, [row("Mamá", "hola")]);
+	await ringOnce("ok");
+	await ringOnce("ok");
+	assert.deepEqual(rings(alpha).map((ring) => ring.preview), ["ok"]);
+	for (let i = 1; i <= 20; i++) await ringOnce(`mensaje ${i}`);
+	assert.equal(rings(alpha).length, 21);
+	await ringOnce("ok");
+	assert.equal(rings(alpha).length, 22);
+	await ringOnce("mensaje 20");
+	assert.equal(rings(alpha).length, 22);
+});
+
+test("a message unread when the watch started does not ring when WhatsApp shows it unread again", async () => {
+	const { watch, alpha } = setup({ allow: ["Mamá"], rows: [row("Mamá", "viejo", "1")] });
+	await watch.setWatch(alpha as any, true);
+	await watch.report(7, [row("Mamá", "viejo", "1")]);
+	await watch.report(7, [row("Mamá", "respuesta del agente")]);
+	await watch.report(7, [row("Mamá", "viejo", "1")]);
+	assert.deepEqual(rings(alpha), []);
+});
+
+test("a message that failed to ring rings when it shows unread again", async () => {
+	const { watch, alpha } = setup({ allow: ["Mamá"] });
+	await watch.setWatch(alpha as any, true);
+	await watch.report(7, [row("Mamá", "hola")]);
+	const call = alpha.connection.call;
+	alpha.connection.call = async () => {
+		throw new Error("Session is busy");
+	};
+	await watch.report(7, [row("Mamá", "uno", "1")]);
+	alpha.connection.call = call;
+	await watch.report(7, [row("Mamá", "hola")]);
+	await watch.report(7, [row("Mamá", "uno", "1")]);
+	assert.deepEqual(rings(alpha).map((ring) => ring.preview), ["uno"]);
+});
+
 test("nothing rings while the watch is off, for a chat off the list, or for a tab outside every group", async () => {
 	const { watch, alpha } = setup({ allow: ["Mamá"] });
 	await watch.report(7, [row("Mamá", "hola", "1")]);
@@ -162,6 +227,10 @@ test("a tab without a baseline (worker restarted) takes its first report as the 
 	await restarted.report(7, [row("Mamá", "hola", "1")]);
 	assert.deepEqual(rings(alpha), []);
 	await restarted.report(7, [row("Mamá", "otra", "2")]);
+	assert.equal(rings(alpha).length, 1);
+	// What was unread in that first report counts as handled too.
+	await restarted.report(7, [row("Mamá", "respuesta del agente")]);
+	await restarted.report(7, [row("Mamá", "hola", "1")]);
 	assert.equal(rings(alpha).length, 1);
 });
 

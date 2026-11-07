@@ -198,6 +198,7 @@ Good to know:
 - `/browser watch` shows when the tab last read its chat list and the last ring, to help diagnose a watch that does not ring.
 - It starts **off** in every new session, and again after Chrome or the extension restarts (an update included).
 - Messages that were already unread when you switched it on do not ring; only new ones do, once each.
+- A message that already rang does not ring again, even if WhatsApp shows it as unread again after the agent replied. Each chat remembers its last 20 such messages, so a new message with exactly the same text as one of them (say a second "ok") does not ring.
 - Chats are matched by the name WhatsApp shows. If two chats in the list have an allowed name (say someone adds you to a group called like your contact), neither rings, so a look-alike cannot get an answer.
 - Messages in the chat you have open in WhatsApp do not ring: WhatsApp shows no unread count for it. The agent closes the chat after replying; if you open one in the agent's WhatsApp tab, close it again (Escape).
 - While someone is typing or recording, WhatsApp shows "typing…" instead of the message: that never rings, and the message rings once its text shows.
