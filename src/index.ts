@@ -5,7 +5,7 @@ import { askApproval } from "./approval.ts";
 import { BrowserController } from "./controller.ts";
 import { configDir } from "./token.ts";
 import { registerBrowserTools, setBrowserToolsActive } from "./tools.ts";
-import { refreshWatchStatus, watchCommand, watchHandlers } from "./watch.ts";
+import { PendingWakes, refreshWatchStatus, watchCommand, watchHandlers } from "./watch.ts";
 
 function parsePort(value: string | undefined): number | undefined {
 	if (!value) return undefined;
@@ -102,6 +102,7 @@ export default function gentleChrome(pi: ExtensionAPI) {
 		}
 	};
 	const setWatchStatus = (text: string | undefined) => ctx?.ui.setStatus("gentle-chrome-watch", text);
+	const pendingWakes = new PendingWakes();
 	const controller = new BrowserController({
 		configDir: configDir(process.env, homedir()),
 		// Unset: scan the session port range, so several sessions run side by side.
@@ -117,8 +118,11 @@ export default function gentleChrome(pi: ExtensionAPI) {
 		},
 		// The extension decided this step needs approval; the user answers here.
 		// A new WhatsApp message from an allowed chat starts a turn while the user has the watch on.
-		handlers: { approve, ...watchHandlers((message, options) => pi.sendMessage(message, options), setWatchStatus) },
+		handlers: { approve, ...watchHandlers((message, options) => pi.sendMessage(message, options), setWatchStatus, pendingWakes) },
 	});
+
+	// A queued wake that Pi delivers lets that chat's next message queue one again.
+	pi.on("message_start", (event) => pendingWakes.delivered(event.message));
 
 	pi.on("session_start", async (_event, context) => {
 		ctx = context;
