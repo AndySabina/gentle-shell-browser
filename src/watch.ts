@@ -143,13 +143,61 @@ export class PendingWakes {
 }
 
 /**
+ * The wakes for messages that arrived while the agent ran, one per chat. A
+ * wake queued then would arrive after the agent already read those messages,
+ * so when the run ends each chat is asked again and rings only if it still
+ * has unread messages.
+ */
+export class HeldWakes {
+	private busy = false;
+	private readonly wakes = new Map<string, WakeParams>();
+
+	/** Pi started a run: wakes wait until it ends. */
+	agentStarted(): void {
+		this.busy = true;
+	}
+
+	/** Whether the agent runs; then `wake` waits, replacing an earlier one from its chat. */
+	hold(wake: WakeParams): boolean {
+		if (!this.busy) return false;
+		this.wakes.set(chatKey(wake.chat), wake);
+		return true;
+	}
+
+	/**
+	 * The run ended: asks the extension how many messages each held chat still
+	 * has unread, and passes on the wakes of those with some. An extension that
+	 * cannot answer gets the held wake: a real message is never lost.
+	 */
+	async agentEnded(call: (method: string, params: unknown) => Promise<unknown>, ring: (wake: WakeParams) => unknown): Promise<void> {
+		this.busy = false;
+		const wakes = [...this.wakes.values()];
+		this.wakes.clear();
+		for (const wake of wakes) {
+			const fresh = await call("whatsappUnread", { chat: wake.chat, tabId: wake.tabId }).then(
+				(answer) => {
+					const { unread, preview } = (answer ?? {}) as Record<string, unknown>;
+					if (!Number.isInteger(unread)) return wake;
+					if ((unread as number) <= 0) return undefined;
+					return { ...wake, unread: unread as number, preview: typeof preview === "string" && preview.length <= MAX_PREVIEW ? preview : wake.preview };
+				},
+				() => wake,
+			);
+			if (fresh) ring(fresh);
+		}
+	}
+}
+
+/**
  * The methods the extension calls on this session for the watch.
  * `send` is pi.sendMessage; `setStatus` shows the switch in the status bar.
  */
-export function watchHandlers(send: Send, setStatus: (text: string | undefined) => void, pending = new PendingWakes()) {
+export function watchHandlers(send: Send, setStatus: (text: string | undefined) => void, pending = new PendingWakes(), held = new HeldWakes()) {
 	return {
 		whatsappMessage: (params: unknown) => {
 			const wake = readWake(params);
+			// The agent runs: the wake waits for its end, when the chat is checked again.
+			if (held.hold(wake)) return { queued: true };
 			// A wake for this chat already waits: it covers this message too.
 			if (!pending.add(wake.chat)) return { queued: true };
 			// Idle: starts a turn. Busy: runs after the current one.

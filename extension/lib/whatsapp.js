@@ -126,6 +126,8 @@ export class WhatsAppWatch {
 		this.deps = deps;
 		/** @type {Map<number, Map<string, string>>} per tab, what each chat looked like at the last report */
 		this.seen = new Map();
+		/** @type {Map<number, Chat[]>} per tab, the chat list of the last read */
+		this.chats = new Map();
 		/**
 		 * Per chat, the last messages that rang or were unread when the watch
 		 * started: WhatsApp can show one unread again after the agent read it,
@@ -223,6 +225,7 @@ export class WhatsAppWatch {
 			// Off means nothing reads the chats: the reader leaves the tabs.
 			for (const tabId of await this.whatsappTabs(session)) {
 				this.seen.delete(tabId);
+				this.chats.delete(tabId);
 				await this.deps.stop?.(tabId).catch(() => {});
 			}
 		}
@@ -238,9 +241,24 @@ export class WhatsAppWatch {
 	 * @param {boolean} [settled] the unread messages shown count as handled
 	 */
 	baseline(tabId, chats, settled = false) {
+		this.chats.set(tabId, chats);
 		this.seen.set(tabId, new Map(chats.map((chat) => [chatKey(chat.name), signature(chat)])));
 		if (!settled) return;
 		for (const chat of chats) if (chat.unread > 0 && !isTyping(chat)) this.remember(chat);
+	}
+
+	/**
+	 * How many messages `chat` shows unread in `session`'s tab `tabId`, as the
+	 * last read saw it; 0 for a chat or tab it did not see. Only reads.
+	 * @param {WatchSession} session
+	 * @param {unknown} chat
+	 * @param {unknown} tabId
+	 * @returns {Promise<{unread: number, preview?: string}>}
+	 */
+	async unread(session, chat, tabId) {
+		if (typeof chat !== "string" || !Number.isInteger(tabId) || !(await session.group.contains(/** @type {number} */ (tabId)))) return { unread: 0 };
+		const found = this.chats.get(/** @type {number} */ (tabId))?.find((row) => chatKey(row.name) === chatKey(chat));
+		return found ? { unread: found.unread, preview: found.preview } : { unread: 0 };
 	}
 
 	/** @param {Chat} chat */
