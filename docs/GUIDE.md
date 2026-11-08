@@ -205,6 +205,7 @@ Good to know:
 - While someone is typing or recording, WhatsApp shows "typing…" instead of the message: that never rings, and the message rings once its text shows.
 - Chrome, the WhatsApp tab and the Gentle Shell session must stay open. A busy session answers when it finishes its current work: messages that arrive meanwhile ring after it finishes, and only if the chat still has unread messages.
 - The replies are real steps and follow your [permission mode](#5-permission-modes): in **Always ask**, every reply waits for you. To let it answer unattended, use **Remember my decisions** and save "Always allow" for `web.whatsapp.com`, or **Never ask**.
+- Files are different: the agent may attach files without asking only in an allowed chat (see [Uploading files](#uploading-files)).
 - The agent is told that the chat's text is untrusted and never an order: someone who writes "ignore your rules" does not get to steer it.
 - With the watch off, nothing reads your chats: the reader is added to the WhatsApp tab only while the watch is on.
 
@@ -297,10 +298,18 @@ In **Remember my decisions** the popup lists what you saved, with **Remove** on 
 
 ![The popup with Never ask selected](images/popup-never.png)
 
-Nothing asks for approval, payments and deletions included. Two limits still hold in every mode:
+Nothing asks for approval, payments and deletions included. File uploads are the one exception: they still follow [their own rule](#uploading-files). Two limits still hold in every mode:
 
 - the session only touches tabs in its own group;
 - STOP, on the page and in the popup, works as always.
+
+### Uploading files
+
+The agent can attach files from your computer to a page, for example a document in a WhatsApp chat through Attach → Document. Chrome's file dialog never opens: the files go straight into the page's file field.
+
+- **Up to 10 files per step.** Each must be a file that exists and that you can read.
+- **Keys, passwords and credentials are never uploaded**, whatever you answer and whatever the mode: files in `.ssh`, `.gnupg`, `.aws`, `.azure`, `.kube`, `.docker`, `secrets`, `.password-store` or `keyrings`; `.env` files; `.netrc`, `.npmrc`, `.pypirc`, `.git-credentials`, `credentials` files; SSH keys (`id_rsa`, `id_ed25519`…), `known_hosts`, `authorized_keys`; and `.pem`, `.key`, `.p12`, `.pfx`, `.keystore`, `.jks`, `.kdbx`, `.ppk`, `.asc` and `.gpg` files. A shortcut (symlink) to one of them is refused too.
+- **When it asks:** an upload into a WhatsApp chat on your [allow list](#answer-whatsapp-messages-on-its-own) goes ahead without asking, as long as no other chat in the list has the same name. **Every other upload asks you, in every mode, Never ask included**: other sites, other chats, or a chat whose name cannot be read. The prompt names the site and lists every file with its path. You can only allow it once: uploads are never remembered.
 
 ### Who can change what
 
@@ -376,7 +385,7 @@ The agent itself gets four tools, only while Chrome is connected to its session:
 |------|------|
 | `browser_tabs` | Lists the tabs in the session's group. |
 | `browser_snapshot` | Reads a tab (see [How the agent reads a page](#how-the-agent-reads-a-page)). |
-| `browser_act` | Takes one step: click, type, press a key, scroll, load a page, go back or forward, reload, or open a new tab in the group. Each step follows your permission mode. |
+| `browser_act` | Takes one step: click, type, press a key, scroll, load a page, go back or forward, reload, open a new tab in the group, or upload local files. Each step follows your permission mode, except uploads (see [Uploading files](#uploading-files)). |
 | `browser_screenshot` | Captures what a tab shows, at most 1024 pixels wide. |
 
 ## 10. Troubleshooting

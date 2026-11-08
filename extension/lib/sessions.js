@@ -368,6 +368,7 @@ export class SessionManager {
  *     key: (params: any, scope: import("./actions.js").ActionScope) => Promise<unknown>,
  *     scroll: (params: any, scope: import("./actions.js").ActionScope) => Promise<unknown>,
  *     navigate: (params: any, scope: import("./actions.js").ActionScope) => Promise<unknown>,
+ *     upload: (params: any, scope: import("./actions.js").ActionScope) => Promise<unknown>,
  *   },
  *   cdp: {evaluate: (tabId: number, expression: string) => Promise<any>, send: (tabId: number, method: string, params?: object) => Promise<any>},
  *   settings: () => Promise<{level: string, riskyDomains: readonly string[], rules?: unknown}>,
@@ -410,7 +411,7 @@ export function sessionHandlers(manager, session, deps) {
 		return tabId;
 	}
 
-	/** @param {"click" | "type" | "key" | "scroll" | "navigate"} method */
+	/** @param {"click" | "type" | "key" | "scroll" | "navigate" | "upload"} method */
 	const act = (method) => tracked(session, async (/** @type {any} */ params) => actions[method]({ ...params, tabId: await groupTab(params) }, scope));
 
 	return {
@@ -472,6 +473,7 @@ export function sessionHandlers(manager, session, deps) {
 		key: act("key"),
 		scroll: act("scroll"),
 		navigate: act("navigate"),
+		upload: act("upload"),
 		cancel: async () => {
 			await manager.cancel(session);
 			return { cancelled: true };

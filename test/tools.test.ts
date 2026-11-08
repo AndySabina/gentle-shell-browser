@@ -1,11 +1,18 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { after, test } from "node:test";
 import { Unanswered } from "../extension/lib/rpc.js";
 import { ACT_TIMEOUT_MS, BROWSER_TOOLS, registerBrowserTools, setBrowserToolsActive } from "../src/tools.ts";
+import { prepareUpload } from "../src/upload.ts";
 
 type Call = (method: string, params: unknown) => Promise<unknown>;
 
-function setup(respond: Call, cancel?: () => Promise<unknown>) {
+/** Uploads checked by the real validator in temp folders, with a fake path converter. */
+const fakeUploads = { prepareUpload: (files: string[]) => prepareUpload(files, { convert: async (path) => `W:${path}` }) };
+
+function setup(respond: Call, cancel?: () => Promise<unknown>, uploads: Parameters<typeof registerBrowserTools>[3] = fakeUploads) {
 	const tools = new Map<string, any>();
 	const calls: { method: string; params: unknown }[] = [];
 	const options: unknown[] = [];
@@ -18,6 +25,7 @@ function setup(respond: Call, cancel?: () => Promise<unknown>) {
 			return respond(method, params);
 		},
 		cancel,
+		uploads,
 	);
 	const run = (name: string, params: unknown, signal?: AbortSignal) => tools.get(name).execute("call-1", params, signal, undefined, {});
 	return { tools, calls, options, run };
@@ -237,6 +245,7 @@ test("browser_act maps every action to the extension method with exactly its par
 		[{ action: "key", tabId: 5, key: "Enter", url: "https://x.test/", text: "x", ref: "e1", deltaY: 3 }, "key", { tabId: 5, key: "Enter" }],
 		[{ action: "open", tabId: 5, url: "https://example.com/", ref: "e1" }, "open", { url: "https://example.com/" }],
 		[{ action: "back", tabId: 5, url: "https://x.test/" }, "navigate", { tabId: 5, action: "back" }],
+		[{ action: "click", tabId: 5, ref: "e1", files: ["/tmp/a.txt"] }, "click", { tabId: 5, ref: "e1" }],
 	];
 	for (const [params, method, sent] of cases) {
 		const { calls, run } = setup(answer());
@@ -257,8 +266,16 @@ test("browser_act refuses a step that misses what its action needs, without call
 		[{ action: "back" }, 'browser_act "back" needs tabId.'],
 		[{ action: "reload", tabId: "5" }, 'browser_act "reload" needs tabId.'],
 		[{ action: "open" }, 'browser_act "open" needs url.'],
-		[{ action: "submit", tabId: 5 }, "browser_act action must be one of: click, type, key, scroll, navigate, open, back, forward, reload."],
-		[{ tabId: 5 }, "browser_act action must be one of: click, type, key, scroll, navigate, open, back, forward, reload."],
+		[{ action: "upload", ref: "e1", files: ["/tmp/a.txt"] }, 'browser_act "upload" needs tabId.'],
+		[{ action: "upload", tabId: 5, files: ["/tmp/a.txt"] }, 'browser_act "upload" needs ref.'],
+		[{ action: "upload", tabId: 5, x: 1, y: 2, files: ["/tmp/a.txt"] }, 'browser_act "upload" needs ref.'],
+		[{ action: "upload", tabId: 5, ref: "e1" }, 'browser_act "upload" needs files (1 to 10 local paths).'],
+		[{ action: "upload", tabId: 5, ref: "e1", files: [] }, 'browser_act "upload" needs files (1 to 10 local paths).'],
+		[{ action: "upload", tabId: 5, ref: "e1", files: Array(11).fill("/tmp/a.txt") }, 'browser_act "upload" needs files (1 to 10 local paths).'],
+		[{ action: "upload", tabId: 5, ref: "e1", files: ["/tmp/a.txt", 7] }, 'browser_act "upload" needs files (1 to 10 local paths).'],
+		[{ action: "upload", tabId: 5, ref: "e1", files: "/tmp/a.txt" }, 'browser_act "upload" needs files (1 to 10 local paths).'],
+		[{ action: "submit", tabId: 5 }, "browser_act action must be one of: click, type, key, scroll, navigate, open, back, forward, reload, upload."],
+		[{ tabId: 5 }, "browser_act action must be one of: click, type, key, scroll, navigate, open, back, forward, reload, upload."],
 	];
 	for (const [params, message] of cases) {
 		const { calls, run } = setup(answer());
@@ -359,7 +376,7 @@ test("browser_act states the shared rules once: refs, approvals, denials, STOP a
 	assert.match(act.description, /STOP ends the run: do not retry/);
 	assert.match(act.description, /only adds an approval/);
 	assert.equal(/risky steps|Navigation and risky/.test(act.description), false);
-	assert.deepEqual(act.parameters.properties.action.enum, ["click", "type", "key", "scroll", "navigate", "open", "back", "forward", "reload"]);
+	assert.deepEqual(act.parameters.properties.action.enum, ["click", "type", "key", "scroll", "navigate", "open", "back", "forward", "reload", "upload"]);
 	assert.deepEqual(act.parameters.required, ["action"]);
 	for (const name of ["browser_tabs", "browser_snapshot", "browser_screenshot"]) {
 		assert.equal(/STOP|did not approve/.test(tools.get(name).description), false, name);
@@ -533,4 +550,59 @@ test("an action that lands on a risky-looking page tells the model", async () =>
 	assert.equal((await click.run("browser_act", { action: "click", tabId: 5, ref: "e1" })).content[0].text, `Clicked element e1 in tab 5.\nNow at: "Login" https://example.com/login\n${RISK_LINE}\n${SNAPSHOT_AGAIN}`);
 	const navigate = setup(async () => ({ url: "https://example.com/login", title: "Login", risk }));
 	assert.equal((await navigate.run("browser_act", { action: "navigate", tabId: 5, url: "https://example.com/login" })).content[0].text, `Navigated tab 5.\nNow at: "Login" https://example.com/login\n${RISK_LINE}\n${SNAPSHOT_AGAIN}`);
+});
+
+// Upload: files are checked in the session before anything reaches Chrome.
+
+const uploadRoot = realpathSync(mkdtempSync(join(tmpdir(), "gentle-tools-upload-")));
+after(() => rmSync(uploadRoot, { recursive: true, force: true }));
+
+function uploadFile(relative: string): string {
+	const path = join(uploadRoot, relative);
+	mkdirSync(join(path, ".."), { recursive: true });
+	writeFileSync(path, "x");
+	return path;
+}
+
+test("browser_act upload sends Chrome-readable paths with the names and paths for the approval", async () => {
+	const report = uploadFile("report.docx");
+	const photo = uploadFile("pics/photo.png");
+	const { calls, run, options } = setup(answer({ ...PAGE, attached: ["report.docx", "photo.png"] }));
+	const result = await run("browser_act", { action: "upload", tabId: 5, ref: "e7", files: [report, photo], x: 1, text: "x" });
+	assert.deepEqual(calls, [{ method: "upload", params: { tabId: 5, ref: "e7", files: [`W:${report}`, `W:${photo}`], names: ["report.docx", "photo.png"], paths: [report, photo] } }]);
+	assert.deepEqual(options, [{ timeoutMs: ACT_TIMEOUT_MS, signal: undefined }]);
+	assert.equal(result.content[0].text, "Attached 2 files to element e7 in tab 5: report.docx, photo.png.");
+	const one = await setup(answer()).run("browser_act", { action: "upload", tabId: 5, ref: "e7", files: [report] });
+	assert.equal(one.content[0].text, "Attached 1 file to element e7 in tab 5: report.docx.");
+});
+
+test("browser_act upload refuses a missing, relative or sensitive file without calling the extension", async () => {
+	const good = uploadFile("ok.txt");
+	const key = uploadFile("vault/.ssh/id_ed25519");
+	const link = join(uploadRoot, "harmless.txt");
+	symlinkSync(key, link);
+	const cases: [string, string][] = [
+		["ok.txt", 'Upload refused: "ok.txt" is not an absolute path. Pass the file\'s full path.'],
+		[join(uploadRoot, "gone.pdf"), `Upload refused: ${JSON.stringify(join(uploadRoot, "gone.pdf"))} does not exist.`],
+		[
+			key,
+			`Upload refused: ${JSON.stringify(key)} is a sensitive file (keys, passwords or credentials), which is never uploaded. Do not retry it or look for another way to upload it.`,
+		],
+		[
+			link,
+			`Upload refused: ${JSON.stringify(link)} (resolves to ${JSON.stringify(key)}) is a sensitive file (keys, passwords or credentials), which is never uploaded. Do not retry it or look for another way to upload it.`,
+		],
+	];
+	for (const [path, message] of cases) {
+		const { calls, run } = setup(answer());
+		await assert.rejects(run("browser_act", { action: "upload", tabId: 5, ref: "e7", files: [good, path] }), { message }, path);
+		assert.deepEqual(calls, [], path);
+	}
+});
+
+test("browser_act describes upload in one short line", () => {
+	const { tools } = setup(async () => undefined);
+	const act = tools.get("browser_act");
+	assert.match(act.description, /upload: ref \(a file input or what opens its chooser\), files: 1-10 absolute paths; sensitive files are refused\./);
+	assert.deepEqual(act.parameters.properties.files, { type: "array", items: { type: "string" } });
 });

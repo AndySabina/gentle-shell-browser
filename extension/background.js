@@ -113,6 +113,8 @@ const actions = new Actions({
 	guard,
 	inGroup: async () => false,
 	saveRule,
+	// Uploads into a chat on the watch allow list go ahead without asking; the list is the watch's own.
+	allowList: () => watch.allowList(),
 });
 
 let running = 0;

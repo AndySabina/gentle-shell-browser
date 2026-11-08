@@ -8,10 +8,14 @@
 // it may wait for the user's approval in Gentle Shell, where in remember mode
 // the user can save the decision for that site and kind of step. The agent's
 // `risky: true` can only add an approval; it can never make a step less risky.
+// Uploads have their own rule instead of the mode: they always ask, in every
+// mode and with nothing to remember, unless the tab shows a WhatsApp Web chat
+// on the watch allow list that no other chat row shares the name of.
 
 import { keyEvent } from "./keys.js";
 import { pageInfoExpression, pageRiskExpression, resolveRefExpression } from "./page.js";
 import { decideStep, isRiskyPage, NOT_APPROVED, normalizeMode, readAnswer, siteOf, stepCategory, WAITING_LABEL } from "./policy.js";
+import { isWhatsAppUrl, openChatAllowed, openChatExpression } from "./whatsapp.js";
 
 export const STOPPED = "Stopped by the user in Chrome.";
 const SETTLE_MS = 600;
@@ -21,12 +25,22 @@ const BUTTONS = { left: 1, right: 2, middle: 4 };
 const TARGET = "Pass either ref (from browser_snapshot) or both x and y.";
 const SELECT_ALL = { key: "a", code: "KeyA", windowsVirtualKeyCode: 65, modifiers: 2 };
 const MOVED = "The page moved under the cursor; take a new browser_snapshot.";
+const CHOOSER_TIMEOUT_MS = 5000;
+const MAX_UPLOAD_FILES = 10;
+const UPLOAD_PARAMS = `Pass ref and 1 to ${MAX_UPLOAD_FILES} files, each with its name and path.`;
+const CHAT_CHANGED = "The open WhatsApp chat changed before the files were attached; nothing was attached. Take a new browser_snapshot and try again.";
+/**
+ * @param {string} what
+ * @param {number} count
+ */
+const oneFile = (what, count) => `${what} takes one file, but ${count} were given; nothing was attached. Upload one file per step.`;
 
 /**
  * @typedef {{
  *   send: (tabId: number, method: string, params?: object) => Promise<any>,
  *   evaluate: (tabId: number, expression: string) => Promise<any>,
- *   waitForEvent: (tabId: number, methods: string[], timeoutMs: number) => Promise<unknown>,
+ *   waitForEvent: (tabId: number, methods: string[], timeoutMs: number) => Promise<{method: string, params: any} | undefined>,
+ *   backendNodeId: (tabId: number, expression: string) => Promise<number | undefined>,
  *   tabs: () => number[],
  *   detachAll: () => Promise<void>,
  * }} ActionsDebugger
@@ -66,7 +80,9 @@ const MOVED = "The page moved under the cursor; take a new browser_snapshot.";
  *   guard: ActionsGuard,
  *   inGroup: (tabId: number) => Promise<boolean>,
  *   saveRule?: SaveRule,
- * }} ActionsDeps `saveRule` stores a decision the user chose to remember
+ *   allowList?: () => Promise<string[]>,
+ * }} ActionsDeps `saveRule` stores a decision the user chose to remember; `allowList` is the
+ *   WhatsApp watch allow list (uploads into those chats do not ask)
  */
 
 /**
@@ -123,6 +139,7 @@ function elementFacts(at) {
 		editable: Boolean(/** @type {HTMLElement} */ (el).isContentEditable),
 		isSubmit: Boolean(form) && ["submit", "image"].includes(buttonType),
 		formFields: form ? [...form.querySelectorAll("input")].slice(0, 100).map(fieldFacts) : [],
+		multiple: tag === "input" ? html.multiple : undefined,
 		inForm: Boolean(form),
 		formAction: form ? actionOf(form) : "",
 		searchLandmark: Boolean(el.closest("[role=search], search")),
@@ -168,6 +185,24 @@ function hitTest(at) {
  */
 export function hitTestExpression(at) {
 	return `(${hitTest.toString()})(${JSON.stringify(at)})`;
+}
+
+/**
+ * Runs inside the page. Self-contained: serialized with `.toString()`.
+ * The element behind `ref`, as an object for DOM commands; null when gone.
+ * @param {string} ref
+ */
+function refElement(ref) {
+	const el = /** @type {any} */ (globalThis).__gentleRefs?.get(ref);
+	return el && el.isConnected ? el : null;
+}
+
+/**
+ * Expression for Debugger.backendNodeId: the element behind `ref`.
+ * @param {string} ref
+ */
+export function refElementExpression(ref) {
+	return `(${refElement.toString()})(${JSON.stringify(ref)})`;
 }
 
 /**
@@ -248,6 +283,7 @@ export class Actions {
 		this.guard = deps.guard;
 		this.inGroup = deps.inGroup;
 		this.saveRule = deps.saveRule;
+		this.allowList = deps.allowList ?? (async () => []);
 		/** @type {Set<Run>} actions running or waiting their turn */
 		this.runs = new Set();
 		/** @type {Promise<void>} settles when the action before the newest one ended */
@@ -404,6 +440,131 @@ export class Actions {
 				return this.input(run, tabId, "Page.navigateToHistoryEntry", { entryId });
 			});
 		}, scope);
+	}
+
+	/**
+	 * browser_act upload: sets local files on the file input behind `ref`, or
+	 * clicks `ref` and sets them on the file chooser it opens, which Chrome
+	 * hands over instead of showing its dialog. `files` are the paths Chrome
+	 * reads; `names` and `paths` are what the approval lists. Never decided by
+	 * the permission mode or a saved rule (see uploadAllowed).
+	 * @param {{tabId: number, ref: string, files: string[], names: string[], paths: string[]}} params
+	 * @param {ActionScope} [scope]
+	 */
+	async upload(params, scope) {
+		const { tabId, ref, files, names, paths } = params;
+		/** @param {unknown} value */
+		const isList = (value) => Array.isArray(value) && value.length >= 1 && value.length <= MAX_UPLOAD_FILES && value.every((item) => typeof item === "string" && item.length > 0);
+		if (typeof ref !== "string" || !ref || !isList(files) || !isList(names) || !isList(paths) || names.length !== files.length || paths.length !== files.length) {
+			throw new Error(UPLOAD_PARAMS);
+		}
+		return this.exclusive(async (run) => {
+			run.tabs.add(tabId);
+			const before = await this.info(run, tabId);
+			const target = await this.target(run, tabId, { ref });
+			const element = await this.facts(run, tabId, { ref });
+			const fileInput = element?.tag === "input" && element.type === "file";
+			if (fileInput && !element.multiple && files.length > 1) throw new Error(oneFile("This file input", files.length));
+			const label = `Upload${quoted(target.name)}`;
+			await this.step(run, this.overlay.move(tabId, target.x, target.y, label, target.rect));
+			const allowedChat = await this.uploadAllowed(run, tabId, before.url);
+			if (!allowedChat) await this.askUpload(run, tabId, before.url, names, paths, { ...target, label });
+			// Right before the files are set: an upload nobody was asked about still goes into an allowed chat.
+			const confirm = async () => {
+				if (allowedChat && !(await this.uploadAllowed(run, tabId, (await this.info(run, tabId)).url))) throw new Error(CHAT_CHANGED);
+			};
+			return this.guarded(run, tabId, {}, async () => {
+				if (fileInput) {
+					const backendNodeId = await this.step(run, this.cdp.backendNodeId(tabId, refElementExpression(ref)));
+					if (backendNodeId === undefined) throw new Error(`Element reference ${ref} is stale or unknown. Take a new browser_snapshot.`);
+					await confirm();
+					await this.input(run, tabId, "DOM.setFileInputFiles", { files, backendNodeId });
+				} else {
+					const what = element?.name ? JSON.stringify(element.name) : `element ${ref}`;
+					await this.chooser(run, tabId, { ref, target, label, what }, files, confirm);
+				}
+				return { ...(await this.settle(run, tabId, before)), attached: [...names] };
+			});
+		}, scope);
+	}
+
+	/**
+	 * Clicks `at.ref` with Chrome's file chooser intercepted and sets `files` on
+	 * the input that opened it. The interception always ends, after STOP too.
+	 * @param {Run} run
+	 * @param {number} tabId
+	 * @param {{ref: string, target: {x: number, y: number}, label: string, what: string}} at
+	 * @param {string[]} files
+	 * @param {() => Promise<void>} confirm throws when the files must not be set after all
+	 */
+	async chooser(run, tabId, at, files, confirm) {
+		await this.input(run, tabId, "Page.enable");
+		await this.input(run, tabId, "Page.setInterceptFileChooserDialog", { enabled: true });
+		try {
+			// Subscribed before the click, so the event cannot be missed.
+			const opened = this.cdp.waitForEvent(tabId, ["Page.fileChooserOpened"], CHOOSER_TIMEOUT_MS);
+			const point = await this.aim(run, tabId, at.ref, at.target, at.label);
+			await this.press(run, tabId, point.x, point.y, "left", 1);
+			const event = await this.step(run, opened);
+			if (!event) {
+				throw new Error(
+					`No file chooser opened within ${CHOOSER_TIMEOUT_MS / 1000} seconds of clicking ${at.what}; nothing was attached. Pass the file input's ref, or the element that opens the file chooser, from a new browser_snapshot.`,
+				);
+			}
+			const { mode, backendNodeId } = event.params ?? {};
+			if (mode === "selectSingle" && files.length > 1) throw new Error(oneFile("The file chooser", files.length));
+			await confirm();
+			await this.input(run, tabId, "DOM.setFileInputFiles", { files, backendNodeId });
+		} finally {
+			// Only while still attached: this must never attach the debugger again after STOP.
+			if (this.cdp.tabs().includes(tabId)) await this.cdp.send(tabId, "Page.setInterceptFileChooserDialog", { enabled: false }).catch(() => {});
+		}
+	}
+
+	/**
+	 * Whether an upload in the tab may go ahead without asking: it shows WhatsApp
+	 * Web, and the chat open there is on the watch allow list with no other chat
+	 * row of the same name. Anything that cannot be read is not allowed.
+	 * @param {Run} run
+	 * @param {number} tabId
+	 * @param {string} pageUrl
+	 */
+	async uploadAllowed(run, tabId, pageUrl) {
+		if (!isWhatsAppUrl(pageUrl)) return false;
+		const found = await this.step(run, Promise.resolve().then(() => this.cdp.evaluate(tabId, openChatExpression())).catch(() => null));
+		const allowed = await this.step(run, Promise.resolve().then(() => this.allowList()).catch(() => []));
+		return openChatAllowed(found, Array.isArray(allowed) ? allowed : []);
+	}
+
+	/**
+	 * Asks for an upload in every permission mode, listing every file; the
+	 * answer is never saved.
+	 * @param {Run} run
+	 * @param {number} tabId
+	 * @param {string} pageUrl
+	 * @param {string[]} names
+	 * @param {string[]} paths
+	 * @param {{x: number | null, y: number | null, rect?: Rect, label: string}} at
+	 */
+	async askUpload(run, tabId, pageUrl, names, paths, at) {
+		const { level } = await this.step(run, this.settings());
+		const count = names.length;
+		// Every file, whole and on its own line in the prompt: the user sees all they allow.
+		const files = names.map((name, index) => `${name} (${paths[index]})`);
+		await this.ask(
+			run,
+			tabId,
+			{
+				kind: "action",
+				title: `upload ${count} local file${count === 1 ? "" : "s"} to ${hostOf(pageUrl)}: ${names.join(", ")}`,
+				detail: `Upload in tab ${tabId}: this sends local files from your computer to the page. Uploads always ask, except into a chat on your WhatsApp allow list; this answer is not remembered.`,
+				url: pageUrl,
+				reason: "uploading local files",
+				level: normalizeMode(level),
+				files,
+			},
+			at,
+		);
 	}
 
 	/**

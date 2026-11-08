@@ -179,6 +179,27 @@ export class Debugger {
 	}
 
 	/**
+	 * The DOM node `expression` returns in our isolated world, as a
+	 * backendNodeId for DOM commands; undefined when it returns no object.
+	 * @param {number} tabId
+	 * @param {string} expression
+	 * @returns {Promise<number | undefined>}
+	 */
+	async backendNodeId(tabId, expression) {
+		const contextId = await this.world(tabId);
+		const response = await this.send(tabId, "Runtime.evaluate", { expression, contextId, returnByValue: false });
+		if (response.exceptionDetails) throw new Error(response.exceptionDetails.exception?.description ?? response.exceptionDetails.text ?? "Page script failed");
+		const objectId = response.result?.objectId;
+		if (!objectId) return undefined;
+		try {
+			const { node } = await this.send(tabId, "DOM.describeNode", { objectId });
+			return node?.backendNodeId;
+		} finally {
+			await this.send(tabId, "Runtime.releaseObject", { objectId }).catch(() => {});
+		}
+	}
+
+	/**
 	 * @param {number} tabId
 	 * @returns {Promise<number>}
 	 */
