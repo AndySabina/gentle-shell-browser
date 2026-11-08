@@ -3,12 +3,13 @@
 // reads the chat list; this module decides. A session hears about a chat only
 // while the user has switched its watch on, only for chats on the user's allow
 // list, and once per new message. Unread messages already there when the
-// watch is switched on do not ring.
+// watch is switched on, or when a tab's chat list first shows, do not ring.
 
 export const ALLOW_KEY = "whatsappAllow";
 export const WATCH_KEY = "whatsappWatch";
 /** Only WhatsApp Web itself; a look-alike host does not match. */
 export const WHATSAPP_ORIGIN = "https://web.whatsapp.com";
+const WHATSAPP_URL = `${WHATSAPP_ORIGIN}/`;
 const MAX_ROWS = 100;
 const MAX_TEXT = 300;
 const MAX_NAME = 100;
@@ -20,7 +21,7 @@ const MAX_ALLOWED = 100;
  * @typedef {{
  *   id: string,
  *   name: string,
- *   group: {tabs: () => Promise<{tabId: number, url: string}[]>, contains: (tabId: number) => Promise<boolean>},
+ *   group: {tabs: () => Promise<{tabId: number, url: string}[]>, contains: (tabId: number) => Promise<boolean>, openTab?: (url: string) => Promise<{tabId: number}>},
  *   connection?: {state: string, call: (method: string, params: unknown) => Promise<unknown>},
  * }} WatchSession
  * @typedef {{
@@ -205,20 +206,18 @@ export class WhatsAppWatch {
 
 	/**
 	 * Switches `session`'s watch. On, it reads its WhatsApp tabs first, so the
-	 * unread messages already there count as seen; Gentle Shell hears of the change.
+	 * unread messages already there count as seen, and opens WhatsApp Web in
+	 * the session's group when it has none; Gentle Shell hears of the change.
 	 * @param {WatchSession} session
 	 * @param {boolean} on
 	 */
 	async setWatch(session, on) {
 		const watched = { ...(await this.watched()) };
+		let missing = false;
 		if (on) {
-			for (const tabId of await this.whatsappTabs(session)) {
-				this.seen.delete(tabId);
-				const rows = await this.deps.read(tabId).catch(() => undefined);
-				if (!rows) continue;
-				this.baseline(tabId, parseRows(rows), true);
-				await this.noteRead(session.id, parseRows(rows));
-			}
+			const tabs = await this.whatsappTabs(session);
+			for (const tabId of tabs) await this.readBaseline(session, tabId);
+			missing = tabs.length === 0;
 			watched[session.id] = true;
 		} else {
 			delete watched[session.id];
@@ -230,9 +229,35 @@ export class WhatsAppWatch {
 			}
 		}
 		await this.deps.session.set({ [WATCH_KEY]: watched });
+		// Opened once the switch is stored, so its first load finds the watch on.
+		/** @type {{openedWhatsApp?: true, openWhatsAppError?: string}} */
+		let opening = {};
+		if (missing && session.group.openTab) {
+			// The watch is on either way: a tab Chrome refused is reported, not thrown.
+			opening = await session.group
+				.openTab(WHATSAPP_URL)
+				.then(() => ({ openedWhatsApp: /** @type {const} */ (true) }))
+				.catch((error) => ({ openWhatsAppError: error instanceof Error ? error.message : String(error) }));
+		}
 		this.deps.changed?.();
 		await session.connection?.call("watchChanged", { on }).catch(() => {});
-		return this.state(session);
+		return { ...(await this.state(session)), ...opening };
+	}
+
+	/**
+	 * Reads `tabId`'s chat list now, so the unread messages it shows count as
+	 * seen. A list with no chats (WhatsApp Web still loading) is no baseline:
+	 * the first report with chats becomes it.
+	 * @param {WatchSession} session
+	 * @param {number} tabId
+	 */
+	async readBaseline(session, tabId) {
+		this.seen.delete(tabId);
+		const rows = await this.deps.read(tabId).catch(() => undefined);
+		if (!rows) return;
+		const chats = parseRows(rows);
+		if (chats.length > 0) this.baseline(tabId, chats, true);
+		await this.noteRead(session.id, chats);
 	}
 
 	/**
@@ -286,10 +311,7 @@ export class WhatsAppWatch {
 		if (!isWhatsAppUrl(url)) return;
 		const owner = await this.ownerOf(tabId);
 		if (!owner || !(await this.watching(owner.id))) return;
-		const rows = await this.deps.read(tabId).catch(() => undefined);
-		if (!rows) return;
-		this.baseline(tabId, parseRows(rows), true);
-		await this.noteRead(owner.id, parseRows(rows));
+		await this.readBaseline(owner, tabId);
 	}
 
 	/**
@@ -338,6 +360,8 @@ export class WhatsAppWatch {
 		const allowed = new Set((await this.allowList()).map(chatKey));
 		const diagnostics = await this.noteRead(owner.id, chats);
 		const before = this.seen.get(tabId);
+		// No chats yet (WhatsApp Web still loading) is no baseline either.
+		if (!before && chats.length === 0) return;
 		this.baseline(tabId, chats, !before);
 		// A chat showing a typing status keeps what it looked like before.
 		const seen = /** @type {Map<string, string>} */ (this.seen.get(tabId));
