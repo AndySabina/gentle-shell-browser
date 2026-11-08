@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { sessionHandlers } from "../extension/lib/sessions.js";
-import { chatKey, cleanChatName, openChatAllowed, openChatExpression, parseRows, WhatsAppWatch, watchPopup } from "../extension/lib/whatsapp.js";
+import { chatKey, cleanChatName, openChatAllowed, openChatExpression, openChatName, parseRows, WhatsAppWatch, watchPopup } from "../extension/lib/whatsapp.js";
 
 const WA = "https://web.whatsapp.com/";
 
@@ -582,4 +582,9 @@ test("an open chat counts as allowed only when it is on the allow list and exact
 	assert.equal(openChatAllowed(null, ["Mamá"]), false);
 	assert.equal(openChatAllowed("Mamá", ["Mamá"]), false);
 	assert.equal(openChatAllowed({ open: "Mamá", rows: rows("Mamá") }, []), false);
+});
+
+test("openChatName answers the open chat's cleaned name, or null when none can be read", () => {
+	assert.equal(openChatName({ open: " Juan\u200e ", rows: [] }), "Juan");
+	for (const found of [{ open: null, rows: [] }, { open: " \u200f ", rows: [] }, { open: 3 }, "Juan", null, undefined]) assert.equal(openChatName(found), null, JSON.stringify(found));
 });

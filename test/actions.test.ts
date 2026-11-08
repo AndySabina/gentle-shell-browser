@@ -1033,8 +1033,8 @@ test("never mode keeps the group check and STOP", async () => {
 // Upload: local files reach a page only with the user's approval, or in an allowed WhatsApp chat.
 
 const WA = "https://web.whatsapp.com/";
-const FILES = { files: ["W:\\a.docx", "W:\\b.pdf"], names: ["a.docx", "b.pdf"], paths: ["/home/you/a.docx", "/home/you/b.pdf"] };
-const ONE = { files: ["W:\\a.docx"], names: ["a.docx"], paths: ["/home/you/a.docx"] };
+const FILES = { files: ["W:\\a.docx", "W:\\b.pdf"], names: ["a.docx", "b.pdf"], paths: ["/home/you/a.docx", "/home/you/b.pdf"], reals: ["/home/you/a.docx", "/home/you/b.pdf"] };
+const ONE = { files: ["W:\\a.docx"], names: ["a.docx"], paths: ["/home/you/a.docx"], reals: ["/home/you/a.docx"] };
 const FILE_INPUT = { tag: "input", type: "file", name: "Attach", multiple: true };
 const MULTIPLE = { mode: "selectMultiple", backendNodeId: 77 };
 /** WhatsApp shows `open` in the conversation header; `rows` are the chat list's names. */
@@ -1170,11 +1170,13 @@ test("an upload that went ahead without asking stops when the open WhatsApp chat
 });
 
 test("upload refuses incomplete params before touching the tab", async () => {
-	const message = "Pass ref and 1 to 10 files, each with its name and path.";
+	const message = "Pass ref and 1 to 10 files, each with its name, path and real path.";
 	const bad = [
 		{ tabId: TAB, ...FILES },
 		{ tabId: TAB, ref: "e1", ...FILES, files: [] },
-		{ tabId: TAB, ref: "e1", files: Array(11).fill("W:\\a"), names: Array(11).fill("a"), paths: Array(11).fill("/a") },
+		{ tabId: TAB, ref: "e1", files: Array(11).fill("W:\\a"), names: Array(11).fill("a"), paths: Array(11).fill("/a"), reals: Array(11).fill("/a") },
+		{ tabId: TAB, ref: "e1", files: FILES.files, names: FILES.names, paths: FILES.paths },
+		{ tabId: TAB, ref: "e1", ...FILES, reals: ["/a"] },
 		{ tabId: TAB, ref: "e1", ...FILES, names: ["a.docx"] },
 		{ tabId: TAB, ref: "e1", ...FILES, paths: ["/a", 2] },
 		{ tabId: TAB, ref: "e1", ...FILES, files: ["", "W:\\b"] },
@@ -1230,4 +1232,96 @@ test("STOP while waiting for the file chooser sets nothing and stops interceptin
 		["Page.setInterceptFileChooserDialog", { enabled: true }],
 		["Page.setInterceptFileChooserDialog", { enabled: false }],
 	]);
+});
+
+const CHAT_CHANGED = { message: "The open WhatsApp chat changed before the files were attached; nothing was attached. Take a new browser_snapshot and try again." };
+const PAGE_CHANGED = { message: "The page changed before the files were attached; nothing was attached. Take a new browser_snapshot and try again." };
+
+test("a file input upload into an allowed chat stops when the open chat switched to another before the files are set", async () => {
+	const { actions, page, requests, sent } = setup({ facts: FILE_INPUT, allowed: ["Mamá"], chats: [chat("Mamá", ["Mamá", "Juan"]), chat("Juan", ["Mamá", "Juan"])] });
+	page.url = WA;
+	await assert.rejects(actions.upload({ tabId: TAB, ref: "e1", ...FILES }), CHAT_CHANGED);
+	assert.deepEqual(requests, []);
+	assert.deepEqual(fileSteps(sent), []);
+});
+
+test("an approved upload stops when the page origin changed during the approval, sets nothing and stops intercepting", async () => {
+	for (const [facts, steps] of [
+		[FILE_INPUT, []],
+		[harmless, [["Page.setInterceptFileChooserDialog", { enabled: true }], ["Page.setInterceptFileChooserDialog", { enabled: false }]]],
+	] as const) {
+		const { actions, page, requests, sent } = setup({ facts, chooser: MULTIPLE, approve: () => {
+			page.url = "https://evil.test/upload";
+			return true;
+		} });
+		await assert.rejects(actions.upload({ tabId: TAB, ref: "e1", ...FILES }), PAGE_CHANGED, facts.tag);
+		assert.equal(requests.length, 1, facts.tag);
+		assert.deepEqual(fileSteps(sent), steps, facts.tag);
+	}
+});
+
+test("an approved WhatsApp upload stops when the open chat changed during the approval, sets nothing and stops intercepting", async () => {
+	for (const [facts, steps] of [
+		[FILE_INPUT, []],
+		[harmless, [["Page.setInterceptFileChooserDialog", { enabled: true }], ["Page.setInterceptFileChooserDialog", { enabled: false }]]],
+	] as const) {
+		const { actions, page, requests, sent } = setup({ facts, chooser: MULTIPLE, allowed: ["Mamá"], chats: [chat("Juan", ["Mamá", "Juan"]), chat("Pedro", ["Mamá", "Juan", "Pedro"])] });
+		page.url = WA;
+		await assert.rejects(actions.upload({ tabId: TAB, ref: "e1", ...FILES }), CHAT_CHANGED, facts.tag);
+		assert.equal(requests.length, 1, facts.tag);
+		assert.deepEqual(fileSteps(sent), steps, facts.tag);
+	}
+	// A chat that could be read when asked and cannot be read right before the set has changed too.
+	const unreadable = setup({ facts: FILE_INPUT, chats: [chat("Juan", ["Juan"]), new Error("page script failed")] });
+	unreadable.page.url = WA;
+	await assert.rejects(unreadable.actions.upload({ tabId: TAB, ref: "e1", ...ONE }), CHAT_CHANGED);
+	assert.deepEqual(fileSteps(unreadable.sent), []);
+});
+
+test("an upload approval answered with anything but true is refused and sets nothing", async () => {
+	for (const answer of ["yes", 1, { approved: "true" }, { approved: 1 }]) {
+		const { actions, sent, input } = setup({ facts: FILE_INPUT, approve: () => answer });
+		await assert.rejects(actions.upload({ tabId: TAB, ref: "e1", ...FILES }), NOT_APPROVED, JSON.stringify(answer));
+		assert.deepEqual(fileSteps(sent), [], JSON.stringify(answer));
+		assert.deepEqual(input(), [], JSON.stringify(answer));
+	}
+});
+
+test("a tab that leaves the group before the file chooser opens gets no files, and the interception ends", async () => {
+	let member = true;
+	const { actions, sent } = setup({
+		inGroup: () => member,
+		chooser: () => {
+			member = false;
+			return MULTIPLE;
+		},
+	});
+	await assert.rejects(actions.upload({ tabId: TAB, ref: "e1", ...FILES }), LEFT);
+	assert.deepEqual(fileSteps(sent), [
+		["Page.setInterceptFileChooserDialog", { enabled: true }],
+		["Page.setInterceptFileChooserDialog", { enabled: false }],
+	]);
+});
+
+test("an upload on WhatsApp names the open chat in the prompt, or the site when no chat name can be read", async () => {
+	const named = setup({ facts: FILE_INPUT, chats: [chat("Juan", ["Mamá", "Juan"])] });
+	named.page.url = WA;
+	await named.actions.upload({ tabId: TAB, ref: "e1", ...FILES });
+	assert.equal(named.requests[0].title, 'upload 2 local files to the WhatsApp chat "Juan": a.docx, b.pdf');
+	assert.deepEqual(named.requests[0].files, UPLOAD_FILES);
+	assert.equal(fileSteps(named.sent).length, 1);
+	for (const found of [chat(null, ["Juan"]), new Error("page script failed")]) {
+		const unnamed = setup({ facts: FILE_INPUT, chats: [found] });
+		unnamed.page.url = WA;
+		await unnamed.actions.upload({ tabId: TAB, ref: "e1", ...FILES });
+		assert.equal(unnamed.requests[0].title, "upload 2 local files to web.whatsapp.com: a.docx, b.pdf");
+		assert.equal(fileSteps(unnamed.sent).length, 1);
+	}
+});
+
+test("a symlinked file's prompt line shows the path given and the real file read, named by the real file", async () => {
+	const { actions, requests } = setup({ facts: FILE_INPUT });
+	await actions.upload({ tabId: TAB, ref: "e1", files: ["W:\\tax.pdf"], names: ["tax.pdf"], paths: ["/tmp/vacation.jpg"], reals: ["/home/you/private/tax.pdf"] });
+	assert.equal(requests[0].title, "upload 1 local file to example.com: tax.pdf");
+	assert.deepEqual(requests[0].files, ["tax.pdf (/tmp/vacation.jpg → /home/you/private/tax.pdf)"]);
 });

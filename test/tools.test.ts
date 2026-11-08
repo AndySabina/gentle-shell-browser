@@ -569,11 +569,21 @@ test("browser_act upload sends Chrome-readable paths with the names and paths fo
 	const photo = uploadFile("pics/photo.png");
 	const { calls, run, options } = setup(answer({ ...PAGE, attached: ["report.docx", "photo.png"] }));
 	const result = await run("browser_act", { action: "upload", tabId: 5, ref: "e7", files: [report, photo], x: 1, text: "x" });
-	assert.deepEqual(calls, [{ method: "upload", params: { tabId: 5, ref: "e7", files: [`W:${report}`, `W:${photo}`], names: ["report.docx", "photo.png"], paths: [report, photo] } }]);
+	assert.deepEqual(calls, [{ method: "upload", params: { tabId: 5, ref: "e7", files: [`W:${report}`, `W:${photo}`], names: ["report.docx", "photo.png"], paths: [report, photo], reals: [report, photo] } }]);
 	assert.deepEqual(options, [{ timeoutMs: ACT_TIMEOUT_MS, signal: undefined }]);
 	assert.equal(result.content[0].text, "Attached 2 files to element e7 in tab 5: report.docx, photo.png.");
 	const one = await setup(answer()).run("browser_act", { action: "upload", tabId: 5, ref: "e7", files: [report] });
 	assert.equal(one.content[0].text, "Attached 1 file to element e7 in tab 5: report.docx.");
+});
+
+test("browser_act upload sends a symlink's real path for the approval and names the file by the real one", async () => {
+	const tax = uploadFile("private/tax.pdf");
+	const link = join(uploadRoot, "vacation.jpg");
+	symlinkSync(tax, link);
+	const { calls, run } = setup(answer({ ...PAGE, attached: ["tax.pdf"] }));
+	const result = await run("browser_act", { action: "upload", tabId: 5, ref: "e7", files: [link] });
+	assert.deepEqual(calls, [{ method: "upload", params: { tabId: 5, ref: "e7", files: [`W:${tax}`], names: ["tax.pdf"], paths: [link], reals: [tax] } }]);
+	assert.equal(result.content[0].text, "Attached 1 file to element e7 in tab 5: tax.pdf.");
 });
 
 test("browser_act upload refuses a missing, relative or sensitive file without calling the extension", async () => {

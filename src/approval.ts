@@ -6,6 +6,7 @@ import type { ExtensionUIDialogOptions } from "@earendil-works/pi-coding-agent";
  * ("Deny" is listed first, so it is the default). In remember mode the
  * request names the site and category, and the user may also save "Always
  * allow" or "Always deny" for them; the extension stores that decision.
+ * Uploads never offer them.
  */
 
 export type Category = "navigate" | "click" | "type" | "key" | "scroll" | "money" | "irreversible";
@@ -59,7 +60,7 @@ export const CATEGORY_LABELS: Record<Category, string> = {
  * bidi overrides that reorder what the user reads, and line separators; clip.
  */
 function clean(text: string, max = 300): string {
-	const flat = text.replace(/[\u0000-\u001f\u007f-\u009f\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g, " ").trim();
+	const flat = text.replace(/[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g, " ").trim();
 	return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 }
 
@@ -107,7 +108,8 @@ export async function askApproval(context: ApprovalContext | undefined, value: u
 		[DENY, { approved: false }],
 		[ALLOW_ONCE, { approved: true }],
 	]);
-	if (request.remember) {
+	// An upload's answer is never saved, whatever the request offers.
+	if (request.remember && !request.files) {
 		const { site, category } = request.remember;
 		answers.set(`Always allow ${CATEGORY_LABELS[category]} on ${site}`, { approved: true, remember: "allow" });
 		answers.set(`Always deny ${CATEGORY_LABELS[category]} on ${site}`, { approved: false, remember: "deny" });

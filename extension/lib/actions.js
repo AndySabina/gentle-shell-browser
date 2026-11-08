@@ -15,7 +15,7 @@
 import { keyEvent } from "./keys.js";
 import { pageInfoExpression, pageRiskExpression, resolveRefExpression } from "./page.js";
 import { decideStep, isRiskyPage, NOT_APPROVED, normalizeMode, readAnswer, siteOf, stepCategory, WAITING_LABEL } from "./policy.js";
-import { isWhatsAppUrl, openChatAllowed, openChatExpression } from "./whatsapp.js";
+import { isWhatsAppUrl, openChatAllowed, openChatExpression, openChatName } from "./whatsapp.js";
 
 export const STOPPED = "Stopped by the user in Chrome.";
 const SETTLE_MS = 600;
@@ -27,8 +27,9 @@ const SELECT_ALL = { key: "a", code: "KeyA", windowsVirtualKeyCode: 65, modifier
 const MOVED = "The page moved under the cursor; take a new browser_snapshot.";
 const CHOOSER_TIMEOUT_MS = 5000;
 const MAX_UPLOAD_FILES = 10;
-const UPLOAD_PARAMS = `Pass ref and 1 to ${MAX_UPLOAD_FILES} files, each with its name and path.`;
+const UPLOAD_PARAMS = `Pass ref and 1 to ${MAX_UPLOAD_FILES} files, each with its name, path and real path.`;
 const CHAT_CHANGED = "The open WhatsApp chat changed before the files were attached; nothing was attached. Take a new browser_snapshot and try again.";
+const PAGE_CHANGED = "The page changed before the files were attached; nothing was attached. Take a new browser_snapshot and try again.";
 /**
  * @param {string} what
  * @param {number} count
@@ -272,6 +273,19 @@ function hostOf(url) {
 	}
 }
 
+/**
+ * The page's origin; the whole URL when it has none (an opaque origin, or not a URL).
+ * @param {string} url
+ */
+function originOf(url) {
+	try {
+		const { origin } = new URL(url);
+		return origin === "null" ? url : origin;
+	} catch {
+		return url;
+	}
+}
+
 export class Actions {
 	/** @param {ActionsDeps} deps */
 	constructor(deps) {
@@ -446,18 +460,19 @@ export class Actions {
 	 * browser_act upload: sets local files on the file input behind `ref`, or
 	 * clicks `ref` and sets them on the file chooser it opens, which Chrome
 	 * hands over instead of showing its dialog. `files` are the paths Chrome
-	 * reads; `names` and `paths` are what the approval lists. Never decided by
-	 * the permission mode or a saved rule (see uploadAllowed).
-	 * @param {{tabId: number, ref: string, files: string[], names: string[], paths: string[]}} params
+	 * reads; `names`, `paths` and `reals` (where each path resolves to) are what
+	 * the approval lists. Never decided by the permission mode or a saved rule
+	 * (see uploadChat). Right before the files are set, the page origin and the
+	 * open WhatsApp chat must still be the ones allowed or approved.
+	 * @param {{tabId: number, ref: string, files: string[], names: string[], paths: string[], reals: string[]}} params
 	 * @param {ActionScope} [scope]
 	 */
 	async upload(params, scope) {
-		const { tabId, ref, files, names, paths } = params;
+		const { tabId, ref, files, names, paths, reals } = params;
 		/** @param {unknown} value */
-		const isList = (value) => Array.isArray(value) && value.length >= 1 && value.length <= MAX_UPLOAD_FILES && value.every((item) => typeof item === "string" && item.length > 0);
-		if (typeof ref !== "string" || !ref || !isList(files) || !isList(names) || !isList(paths) || names.length !== files.length || paths.length !== files.length) {
-			throw new Error(UPLOAD_PARAMS);
-		}
+		const isList = (value) =>
+			Array.isArray(value) && value.length === files.length && value.length >= 1 && value.length <= MAX_UPLOAD_FILES && value.every((item) => typeof item === "string" && item.length > 0);
+		if (typeof ref !== "string" || !ref || !Array.isArray(files) || ![files, names, paths, reals].every(isList)) throw new Error(UPLOAD_PARAMS);
 		return this.exclusive(async (run) => {
 			run.tabs.add(tabId);
 			const before = await this.info(run, tabId);
@@ -467,11 +482,14 @@ export class Actions {
 			if (fileInput && !element.multiple && files.length > 1) throw new Error(oneFile("This file input", files.length));
 			const label = `Upload${quoted(target.name)}`;
 			await this.step(run, this.overlay.move(tabId, target.x, target.y, label, target.rect));
-			const allowedChat = await this.uploadAllowed(run, tabId, before.url);
-			if (!allowedChat) await this.askUpload(run, tabId, before.url, names, paths, { ...target, label });
-			// Right before the files are set: an upload nobody was asked about still goes into an allowed chat.
+			const chat = await this.uploadChat(run, tabId, before.url);
+			if (!chat.allowed) await this.askUpload(run, tabId, before.url, chat.name, names, paths, reals, { ...target, label });
+			// Right before the files are set: still the page, and the chat, that was allowed or approved.
 			const confirm = async () => {
-				if (allowedChat && !(await this.uploadAllowed(run, tabId, (await this.info(run, tabId)).url))) throw new Error(CHAT_CHANGED);
+				const now = (await this.info(run, tabId)).url;
+				if (originOf(now) !== originOf(before.url)) throw new Error(PAGE_CHANGED);
+				const current = await this.uploadChat(run, tabId, now);
+				if (chat.allowed ? !current.allowed : current.name !== chat.name) throw new Error(CHAT_CHANGED);
 			};
 			return this.guarded(run, tabId, {}, async () => {
 				if (fileInput) {
@@ -522,41 +540,47 @@ export class Actions {
 	}
 
 	/**
-	 * Whether an upload in the tab may go ahead without asking: it shows WhatsApp
-	 * Web, and the chat open there is on the watch allow list with no other chat
-	 * row of the same name. Anything that cannot be read is not allowed.
+	 * The WhatsApp Web chat open in the tab: its `name` (null when it cannot be
+	 * read, or the tab is not WhatsApp Web), and whether an upload into it may
+	 * go ahead without asking (`allowed`): it is on the watch allow list with
+	 * no other chat row of the same name. Anything that cannot be read is not allowed.
 	 * @param {Run} run
 	 * @param {number} tabId
 	 * @param {string} pageUrl
+	 * @returns {Promise<{name: string | null, allowed: boolean}>}
 	 */
-	async uploadAllowed(run, tabId, pageUrl) {
-		if (!isWhatsAppUrl(pageUrl)) return false;
+	async uploadChat(run, tabId, pageUrl) {
+		if (!isWhatsAppUrl(pageUrl)) return { name: null, allowed: false };
 		const found = await this.step(run, Promise.resolve().then(() => this.cdp.evaluate(tabId, openChatExpression())).catch(() => null));
 		const allowed = await this.step(run, Promise.resolve().then(() => this.allowList()).catch(() => []));
-		return openChatAllowed(found, Array.isArray(allowed) ? allowed : []);
+		return { name: openChatName(found), allowed: openChatAllowed(found, Array.isArray(allowed) ? allowed : []) };
 	}
 
 	/**
-	 * Asks for an upload in every permission mode, listing every file; the
-	 * answer is never saved.
+	 * Asks for an upload in every permission mode, naming the open WhatsApp
+	 * chat when there is one and listing every file; the answer is never saved.
 	 * @param {Run} run
 	 * @param {number} tabId
 	 * @param {string} pageUrl
+	 * @param {string | null} chat the open WhatsApp chat's name
 	 * @param {string[]} names
 	 * @param {string[]} paths
+	 * @param {string[]} reals
 	 * @param {{x: number | null, y: number | null, rect?: Rect, label: string}} at
 	 */
-	async askUpload(run, tabId, pageUrl, names, paths, at) {
+	async askUpload(run, tabId, pageUrl, chat, names, paths, reals, at) {
 		const { level } = await this.step(run, this.settings());
 		const count = names.length;
-		// Every file, whole and on its own line in the prompt: the user sees all they allow.
-		const files = names.map((name, index) => `${name} (${paths[index]})`);
+		// Every file, whole and on its own line in the prompt: the user sees all they allow,
+		// and the file actually read when a symlink points elsewhere.
+		const files = names.map((name, index) => `${name} (${paths[index]}${reals[index] === paths[index] ? "" : ` → ${reals[index]}`})`);
+		const where = chat ? `the WhatsApp chat ${JSON.stringify(chat)}` : hostOf(pageUrl);
 		await this.ask(
 			run,
 			tabId,
 			{
 				kind: "action",
-				title: `upload ${count} local file${count === 1 ? "" : "s"} to ${hostOf(pageUrl)}: ${names.join(", ")}`,
+				title: `upload ${count} local file${count === 1 ? "" : "s"} to ${where}: ${names.join(", ")}`,
 				detail: `Upload in tab ${tabId}: this sends local files from your computer to the page. Uploads always ask, except into a chat on your WhatsApp allow list; this answer is not remembered.`,
 				url: pageUrl,
 				reason: "uploading local files",
