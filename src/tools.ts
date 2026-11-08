@@ -75,7 +75,7 @@ interface ActionResult {
 	verified?: boolean;
 	/** type only: why the field's value could not be checked. */
 	unverified?: string;
-	/** upload only: the names of the files attached. */
+	/** upload only: the names of the real files attached. */
 	attached?: string[];
 }
 
@@ -181,7 +181,7 @@ function unguardedLine(result: { unguardedNavigation?: { url: string } }): strin
 }
 
 /** What a browser_act step did, in one line. */
-function doneLine(params: ActParams): string {
+function doneLine(params: ActParams, result: ActionResult): string {
 	const tab = `tab ${params.tabId}`;
 	const target = params.ref !== undefined ? `element ${params.ref}` : `at (${params.x}, ${params.y})`;
 	switch (params.action) {
@@ -199,7 +199,8 @@ function doneLine(params: ActParams): string {
 		case "navigate":
 			return `Navigated ${tab}.`;
 		case "upload": {
-			const names = (params.files ?? []).map((file) => basename(file));
+			// The extension names what it attached by the real files, which a symlink may hide.
+			const names = Array.isArray(result.attached) ? result.attached : (params.files ?? []).map((file) => basename(file));
 			return `Attached ${names.length} file${names.length === 1 ? "" : "s"} to element ${params.ref} in ${tab}: ${names.join(", ")}.`;
 		}
 		case "back":
@@ -213,7 +214,7 @@ function doneLine(params: ActParams): string {
 
 /** The result of a step: where the tab is only when it moved; a document load always moves it. */
 function actText(params: ActParams, result: ActionResult, loaded: boolean): string {
-	const lines = [doneLine(params)];
+	const lines = [doneLine(params, result)];
 	if (result.verified === true) lines.push("The field's value changed.");
 	if (typeof result.unverified === "string") lines.push(`Not verified (${result.unverified}): check the field with browser_snapshot.`);
 	if (loaded || result.urlChanged) lines.push(pageLine(result), ...riskLines(result), SNAPSHOT_AGAIN);

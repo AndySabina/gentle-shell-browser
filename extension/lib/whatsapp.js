@@ -147,6 +147,16 @@ export function openChatAllowed(found, allowed) {
 	return matches.length === 1 && matches[0].ambiguous !== true;
 }
 
+/**
+ * The name of the open chat, as the upload prompt shows it; null when it
+ * cannot be read.
+ * @param {unknown} found what openChatExpression returned
+ */
+export function openChatName(found) {
+	const open = found && typeof found === "object" ? /** @type {{open?: unknown}} */ (found).open : undefined;
+	return (typeof open === "string" && clean(open)) || null;
+}
+
 /** What WhatsApp shows in place of the last message while someone types or records. */
 const TYPING = /^(?:.+ )?(?:is typing|está escribiendo|typing|escribiendo|recording audio|grabando audio)…$/i;
 

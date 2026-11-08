@@ -13,11 +13,16 @@ import { basename, isAbsolute } from "node:path";
 
 export const MAX_UPLOAD_FILES = 10;
 
-/** What the extension gets: Chrome-readable paths, and the names and paths the approval prompt lists. */
+/**
+ * What the extension gets: Chrome-readable paths, and what the approval prompt
+ * lists: each real file's name, the path the agent gave and the real path it
+ * resolves to (shown too when a symlink makes them differ).
+ */
 export interface PreparedUpload {
 	files: string[];
 	names: string[];
 	paths: string[];
+	reals: string[];
 }
 
 /** Injectable for tests: the filesystem checks and the path converter. */
@@ -32,8 +37,31 @@ export interface UploadDeps {
 export type RunFile = (command: string, args: string[]) => Promise<string>;
 
 const SENSITIVE_FOLDERS = new Set([".ssh", ".gnupg", ".aws", ".azure", ".kube", ".docker", "secrets", ".password-store", "keyrings"]);
-const SENSITIVE_NAMES = new Set([".env", ".netrc", ".npmrc", ".pypirc", ".git-credentials", "credentials", "credentials.json", "known_hosts", "authorized_keys"]);
-const SENSITIVE_EXTENSIONS = new Set([".pem", ".key", ".p12", ".pfx", ".keystore", ".jks", ".kdbx", ".ppk", ".asc", ".gpg"]);
+/** Folders sensitive only as a pair of segments, such as `.config/gh`. */
+const SENSITIVE_PAIRS = new Set([".config/gcloud", ".config/gh"]);
+const SENSITIVE_NAMES = new Set([
+	".env",
+	".netrc",
+	".npmrc",
+	".pypirc",
+	".git-credentials",
+	"credentials",
+	"credentials.json",
+	"known_hosts",
+	"authorized_keys",
+	".pgpass",
+	".my.cnf",
+	".bash_history",
+	".zsh_history",
+	".python_history",
+	".psql_history",
+	"wallet.dat",
+]);
+const SENSITIVE_EXTENSIONS = new Set([".pem", ".key", ".p12", ".pfx", ".keystore", ".jks", ".kdbx", ".kdb", ".ppk", ".asc", ".gpg", ".ovpn"]);
+/** Saved passwords, cookies and card data: sensitive only inside a Chrome, Chromium, Edge or Brave profile. */
+const BROWSER_NAMES = new Set(["login data", "cookies", "web data"]);
+const BROWSER_PROFILES = new Set(["user data"]);
+const BROWSER_PROFILE_PAIRS = new Set([".config/google-chrome", ".config/chromium", ".config/microsoft-edge", ".config/bravesoftware"]);
 /** SSH key files and their .pub companions, whatever follows the key type. */
 const SSH_KEY = /^id_(rsa|dsa|ecdsa|ed25519)/;
 /** A Windows drive as WSL mounts it. */
@@ -41,13 +69,22 @@ const DRIVE = /^\/mnt\/([a-z])(\/.*)?$/i;
 
 /**
  * Whether `path` names a sensitive file: a sensitive folder anywhere in it, or
- * a sensitive name or extension. Case does not count: Windows drives ignore it.
+ * a sensitive name or extension. Case and trailing spaces or dots do not
+ * count: Windows ignores the first and strips the others.
  */
 export function isSensitivePath(path: string): boolean {
-	const segments = path.toLowerCase().split("/").filter(Boolean);
+	const segments = path
+		.toLowerCase()
+		.split("/")
+		.map((segment) => segment.replace(/[. ]+$/, ""))
+		.filter(Boolean);
 	if (segments.some((segment) => SENSITIVE_FOLDERS.has(segment))) return true;
+	const pairs = segments.slice(1).map((segment, index) => `${segments[index]}/${segment}`);
+	if (pairs.some((pair) => SENSITIVE_PAIRS.has(pair))) return true;
 	const name = segments.at(-1) ?? "";
 	if (SENSITIVE_NAMES.has(name) || name.startsWith(".env.") || SSH_KEY.test(name)) return true;
+	const inBrowserProfile = segments.slice(0, -1).some((segment) => BROWSER_PROFILES.has(segment)) || pairs.slice(0, -1).some((pair) => BROWSER_PROFILE_PAIRS.has(pair));
+	if (inBrowserProfile && BROWSER_NAMES.has(name)) return true;
 	const dot = name.lastIndexOf(".");
 	return dot > 0 && SENSITIVE_EXTENSIONS.has(name.slice(dot));
 }
@@ -120,5 +157,6 @@ export async function prepareUpload(paths: readonly unknown[], overrides: Partia
 			throw refused(`${JSON.stringify(given[index])} could not be converted to a path Chrome can read (${reason(error)}).`);
 		}
 	}
-	return { files, names: given.map((path) => basename(path)), paths: [...given] };
+	// Named by the real file: that is the one Chrome reads and the page receives.
+	return { files, names: reals.map((real) => basename(real)), paths: [...given], reals };
 }

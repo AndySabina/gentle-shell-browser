@@ -3,7 +3,8 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
-import { MAX_UPLOAD_FILES, prepareUpload, windowsPath } from "../src/upload.ts";
+import { execFileSync } from "node:child_process";
+import { isSensitivePath, MAX_UPLOAD_FILES, prepareUpload, windowsPath } from "../src/upload.ts";
 
 // Every file lives in a fresh temp folder: the real home is never touched.
 const root = realpathSync(mkdtempSync(join(tmpdir(), "gentle-upload-")));
@@ -29,7 +30,7 @@ function fakeConvert() {
 const sensitive = (path: string, resolved?: string) =>
 	`Upload refused: ${JSON.stringify(path)}${resolved ? ` (resolves to ${JSON.stringify(resolved)})` : ""} is a sensitive file (keys, passwords or credentials), which is never uploaded. Do not retry it or look for another way to upload it.`;
 
-test("prepareUpload converts each real path and keeps the names and the paths the agent gave", async () => {
+test("prepareUpload converts each real path, names each file by its real name and keeps the paths the agent gave", async () => {
 	const report = file("docs/report.docx");
 	const photo = file("docs/photo.png");
 	const link = join(root, "docs/latest.docx");
@@ -39,8 +40,9 @@ test("prepareUpload converts each real path and keeps the names and the paths th
 	assert.deepEqual(calls, [report, report, photo]);
 	assert.deepEqual(prepared, {
 		files: [`W:${report.replaceAll("/", "\\")}`, `W:${report.replaceAll("/", "\\")}`, `W:${photo.replaceAll("/", "\\")}`],
-		names: ["report.docx", "latest.docx", "photo.png"],
+		names: ["report.docx", "report.docx", "photo.png"],
 		paths: [report, link, photo],
+		reals: [report, report, photo],
 	});
 });
 
@@ -171,4 +173,93 @@ test("a path wslpath cannot convert is refused with the exact message", async ()
 			throw new Error("wslpath: not found");
 		});
 	await assert.rejects(prepareUpload([path], { convert }), { message: `Upload refused: ${JSON.stringify(path)} could not be converted to a path Chrome can read (wslpath: not found).` });
+});
+
+test("the sensitive check ignores case and .. segments, on WSL and Windows drive paths alike", () => {
+	for (const path of ["/h/.SSH/x", "/h/a/../.ssh/id_rsa", "/mnt/c/Users/a/.ssh/id_rsa", "/h/K.PEM", "/h/id_ed25519_sk"]) assert.equal(isSensitivePath(path), true, path);
+});
+
+test("prepareUpload refuses cloud, GitHub CLI, browser, database, history, wallet and VPN credentials", async () => {
+	const paths = [
+		".config/gcloud/application_default_credentials.json",
+		".config/gcloud/configurations/config_default",
+		".config/gh/hosts.yml",
+		".config/gh/config.yml",
+		".CONFIG/GH/hosts.yml",
+		"AppData/Local/Google/Chrome/User Data/Default/Login Data",
+		"AppData/Local/Microsoft/Edge/User Data/Profile 1/Cookies",
+		"AppData/Local/BraveSoftware/Brave-Browser/User Data/Default/Web Data",
+		".config/google-chrome/Default/Login Data",
+		".config/chromium/Default/Cookies",
+		".config/chromium/Profile 2/Web Data",
+		"home/.pgpass",
+		"home/.my.cnf",
+		"home/.bash_history",
+		"home/.zsh_history",
+		"home/.python_history",
+		"home/.psql_history",
+		"coins/wallet.dat",
+		"vpn/office.ovpn",
+		"vault/old.kdb",
+		"vault/OLD.KDB",
+	].map((relative) => file(relative));
+	for (const path of paths) {
+		const { calls, convert } = fakeConvert();
+		await assert.rejects(prepareUpload([path], { convert }), { message: sensitive(path) }, path);
+		assert.deepEqual(calls, [], path);
+	}
+});
+
+test("a sensitive name with trailing spaces or dots is still sensitive, as Windows strips them", () => {
+	for (const path of ["/h/app/.env ", "/h/app/.env.", "/h/app/.env. .", "/h/keys/id_rsa.", "/h/certs/server.pem ", "/h/.ssh./notes.txt", "/h/home/.pgpass..", "/h/vpn/a.ovpn "]) {
+		assert.equal(isSensitivePath(path), true, JSON.stringify(path));
+	}
+});
+
+test("files that only look like the new sensitive ones are allowed", async () => {
+	const paths = [
+		"docs/cookies.txt",
+		"recipes/Cookies",
+		"notes/hosts.yml",
+		"notes/Login Data",
+		"notes/Web Data",
+		"profile/Default/Cookies",
+		".config/ghost/hosts.yml",
+		".config/gcloud-notes.txt",
+		"gh/hosts.yml",
+		"docs/history.txt",
+		"docs/wallet.dat.txt",
+		"docs/ovpn-howto.md",
+		"docs/my.cnf",
+	].map((relative) => file(relative));
+	const { calls, convert } = fakeConvert();
+	await prepareUpload(paths.slice(0, 7), { convert });
+	await prepareUpload(paths.slice(7), { convert });
+	assert.deepEqual(calls, paths);
+});
+
+test("a FIFO is not a regular file and a dangling symlink does not exist; nothing is converted", async () => {
+	const good = file("fine.txt");
+	const fifo = join(root, "pipe");
+	execFileSync("mkfifo", [fifo]);
+	const dangling = join(root, "dangling.pdf");
+	symlinkSync(join(root, "gone-target.pdf"), dangling);
+	const cases: [string, string][] = [
+		[fifo, `Upload refused: ${JSON.stringify(fifo)} is not a regular file.`],
+		[dangling, `Upload refused: ${JSON.stringify(dangling)} does not exist.`],
+	];
+	for (const [path, message] of cases) {
+		const { calls, convert } = fakeConvert();
+		await assert.rejects(prepareUpload([good, path], { convert }), { message }, path);
+		assert.deepEqual(calls, [], path);
+	}
+});
+
+test("prepareUpload reports the real path a symlink resolves to, and names the file by it", async () => {
+	const tax = file("private/tax.pdf");
+	const link = join(root, "vacation.jpg");
+	symlinkSync(tax, link);
+	const { convert } = fakeConvert();
+	const prepared = await prepareUpload([link], { convert });
+	assert.deepEqual(prepared, { files: [`W:${tax.replaceAll("/", "\\")}`], names: ["tax.pdf"], paths: [link], reals: [tax] });
 });
