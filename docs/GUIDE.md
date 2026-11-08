@@ -1,18 +1,19 @@
-# Gentle Chrome user guide
+# Gentle Shell Browser user guide
 
-Set up Gentle Chrome, let your Gentle Shell sessions work in your Chrome, and stay in control of what they do. For the full technical reference, see the [README](../README.md).
+Set up Gentle Shell Browser, let your Gentle Shell sessions work in your Chrome, and stay in control of what they do. For the full technical reference, see the [README](../README.md) and the [architecture notes](ARCHITECTURE.md).
 
 **Contents:** [What it is](#1-what-it-is) · [Requirements](#2-requirements) · [Install](#3-install) · [Using it](#4-using-it) · [Permission modes](#5-permission-modes) · [Risky page detection](#6-risky-page-detection) · [Several sessions](#7-several-gentle-shell-sessions-at-once) · [Updates](#8-updates) · [Commands](#9-commands) · [Troubleshooting](#10-troubleshooting) · [Privacy and safety](#11-privacy-and-safety) · [Uninstall](#12-uninstall)
 
 ## 1. What it is
 
-Gentle Chrome lets the agent in your Gentle Shell session (running in WSL) use the Chrome you already have open on Windows, with your profile and your logins. Each session works **only inside its own tab group**, you watch a pink cursor glide to everything it touches, and **you choose a permission mode**: ask before every step, remember your decisions per site and kind of step, or never ask. A **STOP** button is always one click away.
+Gentle Shell Browser lets the agent in your [Gentle Shell](https://github.com/Gentleman-Programming/gentle-shell) session use the Chrome you already have open, with your profile and your logins. Gentle Shell and Chrome can run on the same computer (Linux, macOS or Windows), or Gentle Shell can run in WSL2 and Chrome on Windows. Each session works **only inside its own tab group**, you watch a pink cursor glide to everything it touches, and **you choose a permission mode**: ask before every step, remember your decisions per site and kind of step, or never ask. A **STOP** button is always one click away.
 
 It has two parts that talk over your own computer only:
 
 ```
-WSL                                                Windows
-───                                                ───────
+Where Gentle Shell runs                            Where Chrome runs
+(same computer, or WSL2)                           (same computer, or Windows)
+───────────────────────                            ───────────────────────────
 Gentle Shell session                               Chrome
  └─ Pi package (src/)                               └─ "Gentle Shell Browser" extension (extension/)
      • browser_* tools for the agent                    • finds your sessions through a small helper
@@ -27,22 +28,23 @@ The extension makes every decision. The terminal only shows you the question, an
 
 ## 2. Requirements
 
-| You need | Version |
-|----------|---------|
-| Windows with WSL2 | Gentle Shell runs in WSL; Chrome runs on Windows. |
-| Google Chrome | 120 or newer, on Windows. |
-| Gentle Shell (Pi) | Installed in WSL. |
-| Node.js | 22.18 or newer, in WSL. |
-| Git and npm | In WSL, to get the code. |
+Everywhere you need **Google Chrome 120 or newer** (or Chromium), **Node.js 22.18 or newer**, **Gentle Shell**, and **git and npm** to get the code. Node, git and npm go where Gentle Shell runs.
+
+| Platform | Gentle Shell runs on | Chrome runs on |
+|----------|----------------------|----------------|
+| Linux | Linux | Linux |
+| macOS | macOS | macOS |
+| Windows | Windows | Windows |
+| Windows + WSL2 | WSL2 | Windows |
 
 ## 3. Install
 
-Do this once. It takes about five minutes.
+Do this once. It takes about five minutes. Run every command where Gentle Shell runs (on WSL2, in your WSL terminal).
 
 ### Step 1. Get the code
 
 ```sh
-git clone <this repository's URL> gentle-shell-browser
+git clone https://github.com/AndySabina/gentle-shell-browser.git gentle-shell-browser
 cd gentle-shell-browser
 npm install
 ```
@@ -57,6 +59,8 @@ Inside the folder, run Gentle Shell's own Pi. With the private layout `gentle-ai
 ~/.local/share/gentle-shell/install/bin/pi install "$PWD"
 ```
 
+If your Gentle Shell is installed elsewhere, run the `bin/pi` inside its install folder the same way.
+
 `gentle-shell install "$PWD"` only works in the older layout: in this one `gentle-shell install` is the Gentle Shell installer and refuses a package path.
 
 | Older layout (`~/.gentle-shell`) | How |
@@ -66,33 +70,45 @@ Inside the folder, run Gentle Shell's own Pi. With the private layout `gentle-ai
 
 ### Step 3. Install the extension and its helper
 
-```sh
-scripts/install-extension.sh
-```
+Run the command for your platform inside the folder:
 
-It writes three things, all for your Windows user only (no admin needed):
+| Platform | Command |
+|----------|---------|
+| Linux, macOS | `npm run install-extension` (`scripts/install-extension.sh` works too) |
+| Windows | `npm run install-extension` |
+| WSL2 | `scripts/install-extension.sh` |
 
-| What | Where |
-|------|-------|
-| The extension | `%USERPROFILE%\gentle-shell-chrome` |
-| The helper (it tells the extension which sessions are running and the secret token) | `%USERPROFILE%\gentle-shell-chrome-host` |
-| The helper's registration | Registry key `HKCU\Software\Google\Chrome\NativeMessagingHosts\dev.gentle.shell` |
+It writes three things, all for your user only (no admin needed):
 
-To use another folder, pass it as the only argument. A Windows path or a `/mnt/…` path both work; the helper goes to the same path with `-host` added:
+| What | Linux | macOS | Windows and WSL2 |
+|------|-------|-------|------------------|
+| The extension | `~/.local/share/gentle-shell-chrome` | `~/Library/Application Support/gentle-shell-chrome` | `%USERPROFILE%\gentle-shell-chrome` |
+| The helper (it tells the extension which sessions are running and the secret token) | `~/.local/share/gentle-shell-chrome-host` | `~/Library/Application Support/gentle-shell-chrome-host` | `%USERPROFILE%\gentle-shell-chrome-host` |
+| The helper's registration | `~/.config/google-chrome/NativeMessagingHosts/dev.gentle.shell.json`, and Chromium's `~/.config/chromium/NativeMessagingHosts/` when that folder exists | `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/dev.gentle.shell.json`, and Chromium's when present | Registry key `HKCU\Software\Google\Chrome\NativeMessagingHosts\dev.gentle.shell` |
 
-```sh
-scripts/install-extension.sh 'D:\tools\gentle-chrome'
-```
-
-The helper must read the same config folder as your Gentle Shell sessions: the token and the list of running sessions live there. The script writes the folder into the helper. If you use a Gentle Shell with a private layout, its sessions keep their own folder: run `/browser status` in a session, then run the script with the folder from its second line:
+To use another folder, pass it as the only argument; the helper goes to the same path with `-host` added:
 
 ```sh
-GENTLE_CHROME_CONFIG_DIR='<config folder from /browser status>' scripts/install-extension.sh
+npm run install-extension -- /home/you/tools/gentle-chrome      # Linux or macOS
+npm run install-extension -- 'C:\Users\you\tools\gentle-chrome' # Windows
+scripts/install-extension.sh 'D:\tools\gentle-chrome'           # WSL2: a Windows path or a /mnt/… path
 ```
 
-The script never deletes anything, only writes inside that folder, and refuses a non-empty folder that is not an earlier copy of the extension. At the end it prints the folder to load in Chrome.
+On WSL2, `npm run install-extension` without a folder refuses and points you to `scripts/install-extension.sh`.
 
-You can run it from inside a Gentle Shell session too. There `PATH` may lack the Windows folders and `WSL_DISTRO_NAME` is unset, so the script finds `cmd.exe` or `powershell.exe` in `C:\Windows\System32`, and the helper starts the WSL distribution that `wslpath -w /` names; the script prints which one. If it cannot tell and the folder is on a Windows drive, it stops before writing: run it again with `WSL_DISTRO_NAME` set to the name `wsl.exe -l -q` lists.
+**Brave, Edge, Vivaldi or another Chromium browser** (Linux and macOS): run the install with `GENTLE_CHROME_NATIVE_HOSTS_DIR` set to that browser's `NativeMessagingHosts` folder. The helper's registration goes only there. **A Linux Chrome inside WSL** (through WSLg): set `GENTLE_CHROME_PLATFORM=linux` so the install treats it as Linux. The variable takes `wsl`, `linux`, `darwin` or `win32`.
+
+The helper must read the same config folder as your Gentle Shell sessions: the token and the list of running sessions live there. The install writes the folder into the helper. If you use a Gentle Shell with a private layout, its sessions keep their own folder: run `/browser status` in a session, then run the install with the folder from its second line:
+
+| Platform | Command |
+|----------|---------|
+| WSL2 | `GENTLE_CHROME_CONFIG_DIR='<config folder from /browser status>' scripts/install-extension.sh` |
+| Linux, macOS | `GENTLE_CHROME_CONFIG_DIR='<config folder from /browser status>' npm run install-extension` |
+| Windows (PowerShell) | `$env:GENTLE_CHROME_CONFIG_DIR='<config folder from /browser status>'; npm run install-extension` |
+
+The install never deletes anything, only writes inside that folder, and refuses a non-empty folder that is not an earlier copy of the extension. At the end it prints the folder to load in Chrome.
+
+On WSL2 you can run the script from inside a Gentle Shell session too. There `PATH` may lack the Windows folders and `WSL_DISTRO_NAME` is unset, so the script finds `cmd.exe` or `powershell.exe` in `C:\Windows\System32`, and the helper starts the WSL distribution that `wslpath -w /` names; the script prints which one. If it cannot tell and the folder is on a Windows drive, it stops before writing: run it again with `WSL_DISTRO_NAME` set to the name `wsl.exe -l -q` lists.
 
 The helper starts the Node that ran the install. If a Gentle Shell reinstall or Node upgrade removes it, the session says so when it starts and in `/browser status`; run `/browser update` to rewrite the helper with the session's Node.
 
@@ -101,7 +117,7 @@ The helper starts the Node that ran the install. If a Gentle Shell reinstall or 
 1. Open `chrome://extensions` in Chrome.
 2. Turn on **Developer mode** (top right).
 3. Press **Load unpacked**.
-4. Choose the folder the script printed (by default `%USERPROFILE%\gentle-shell-chrome`).
+4. Choose the folder the install printed (by default the extension folder in the table above).
 5. Optional: pin **Gentle Shell Browser** from the puzzle-piece menu so its icon stays in the toolbar.
 
 ### Step 5. Restart Gentle Shell
@@ -392,8 +408,10 @@ The agent itself gets four tools, only while Chrome is connected to its session:
 
 | Symptom | Fix |
 |---------|-----|
-| The popup says **Gentle Shell helper not installed — run scripts/install-extension.sh once** (picture below) | Run `scripts/install-extension.sh`; it registers the helper. If the message stays, reload the extension once in `chrome://extensions`. |
-| The popup says **Gentle Shell helper sent an invalid reply** | The helper and the extension come from different copies of the code. Run `scripts/install-extension.sh` again. |
+| The popup says **Gentle Shell helper not installed — run scripts/install-extension.sh once** (picture below) | Run the install for your platform ([step 3](#step-3-install-the-extension-and-its-helper)): `npm run install-extension`, or `scripts/install-extension.sh` on WSL2. It registers the helper. If the message stays, reload the extension once in `chrome://extensions`. |
+| The popup says **Gentle Shell helper sent an invalid reply** | The helper and the extension come from different copies of the code. Run the install again. |
+| The helper is still not found on Linux or macOS | Check that `dev.gentle.shell.json` is in the browser's `NativeMessagingHosts` folder ([step 3](#step-3-install-the-extension-and-its-helper)). Chromium's folder is filled only when it exists: start Chromium once, then run the install again. |
+| You use Brave, Edge, Vivaldi or another Chromium browser on Linux or macOS | Run the install with `GENTLE_CHROME_NATIVE_HOSTS_DIR` set to that browser's `NativeMessagingHosts` folder. |
 | `/browser status` says the helper reads another folder, or that none is installed for this folder | The helper looks for sessions in another config folder, so Chrome never finds this one. Run the command that line prints, then open the popup. |
 | Gentle Shell or `/browser status` says the helper starts Node from a folder that no longer exists | A reinstall or Node upgrade removed the Node the helper was installed with, so Chrome cannot start it. Run `/browser update` (or the command that line prints), then open the popup. |
 | `scripts/install-extension.sh` says it could not tell which WSL distribution this is | Run it again with `WSL_DISTRO_NAME` set to this distribution's name, as `wsl.exe -l -q` lists it. |
@@ -406,7 +424,7 @@ The agent itself gets four tools, only while Chrome is connected to its session:
 | A step is denied without a prompt ("saved rule: deny …") | You saved Always deny for that site and kind. `/browser rules` lists it; `/browser rules clear <site>` or **Remove** in the popup forgets it. |
 | The mode is back to **Always ask** and saved decisions are gone | The extension was removed and loaded again; Chrome deletes an extension's data when you remove it. Reloads and updates keep them. Choose your mode again. |
 | Gentle Shell reports "No free port between 48733 and 48832" | All ports from 48733 to 48832 are busy: close sessions you no longer use, or set `GENTLE_CHROME_PORT` to a free port in that range. A port outside it is never connected. |
-| Changes do not show in Chrome | Run `/browser update`. If it says no folder is recorded, run `scripts/install-extension.sh` once. |
+| Changes do not show in Chrome | Run `/browser update`. If it says no folder is recorded, run the install once. |
 
 ![The popup when the helper is missing: the status pill reads Helper not installed and the hint says Gentle Shell helper not installed — run scripts/install-extension.sh once](images/popup-helper-missing.png)
 
@@ -415,7 +433,8 @@ The agent itself gets four tools, only while Chrome is connected to its session:
 | Topic | How it works |
 |-------|--------------|
 | Network | Everything stays on your computer. Each session listens on `127.0.0.1` only and accepts only this extension, which must prove it knows the secret token. The token itself never travels. |
-| What is stored | The token and the list of running sessions in `~/.config/gentle-chrome/` (WSL). Your mode, saved decisions and WhatsApp allow list in the extension's own Chrome storage. Nothing is sent anywhere else. |
+| What is stored | The token and the list of running sessions in `~/.config/gentle-chrome/` where Gentle Shell runs (on Windows, `.config\gentle-chrome` in your user folder). Your mode, saved decisions and WhatsApp allow list in the extension's own Chrome storage. This package sends nothing anywhere else. |
+| Your model provider | The page text, snapshots and screenshots the agent reads go to the AI model your Gentle Shell session uses, like any other tool result. |
 | The debugger bar | While the agent acts, Chrome shows its "started debugging this browser" bar. That is expected: it is how pages receive real clicks and typing. Cancelling it detaches; the next action attaches again. |
 | Page text | Pages can contain text written to trick an AI. The agent receives page text marked as untrusted, with the instruction never to follow it, and the extension, not the agent, decides what needs your approval. Text shown in the prompt is cleaned of control characters. |
 | Your profile | The agent uses your logged-in sessions, but only in tabs inside its group. Keep sensitive tabs out of the group. |
@@ -425,8 +444,8 @@ The agent itself gets four tools, only while Chrome is connected to its session:
 ## 12. Uninstall
 
 1. In Chrome, open `chrome://extensions` and press **Remove** on **Gentle Shell Browser**.
-2. Delete the two folders the install script created (by default `%USERPROFILE%\gentle-shell-chrome` and `%USERPROFILE%\gentle-shell-chrome-host`).
-3. Remove the helper's registration. From WSL:
+2. Delete the two folders the install created: the extension folder and the helper folder next to it (by default `<extension folder>-host`; see the table in [step 3](#step-3-install-the-extension-and-its-helper)).
+3. Remove the helper's registration. On Linux and macOS, delete the `dev.gentle.shell.json` file the install wrote in the `NativeMessagingHosts` folder (the table in step 3 lists them). On Windows and WSL2, delete the registry key. From WSL:
 
    ```sh
    reg.exe delete 'HKCU\Software\Google\Chrome\NativeMessagingHosts\dev.gentle.shell' /f
@@ -439,7 +458,7 @@ The agent itself gets four tools, only while Chrome is connected to its session:
    ```
 
 4. Remove the package from Gentle Shell, then restart Gentle Shell. With the private layout, run `~/.local/share/gentle-shell/install/bin/pi remove "$PWD"` inside the cloned folder (the same path you installed). With the older layout, delete its path from the `packages` list in `~/.gentle-shell/agent/settings.json`.
-5. Delete the local state in WSL: `~/.config/gentle-chrome` (the token, the session records and the recorded extension folder).
+5. Delete the local state where Gentle Shell runs: `~/.config/gentle-chrome` (the token, the session records and the recorded extension folder).
 6. Delete the cloned folder if you no longer need it.
 
 ---
