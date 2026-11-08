@@ -166,7 +166,7 @@ The agent sees these tools only while Chrome is connected to its session; until 
 
 A doorbell for WhatsApp Web: while it is on, a new message from a chat on your allow list starts the session whose tab group holds the WhatsApp Web tab, and the agent answers in that chat on its own. Nothing waits on the model in the meantime: the extension notices the message, so no tokens are spent until one arrives.
 
-- **Switch:** `/browser watch on|off`, or the popup's **Answer new messages · <session>** switch. Turning it on asks you to confirm. It is kept by the extension, per session, so either side shows the other's change; the status bar shows `WhatsApp: watching`. It starts off in every new session and after Chrome or the extension restarts.
+- **Switch:** `/browser watch on|off`, or the popup's **Answer new messages · <session>** switch. Turning it on asks you to confirm. It is kept by the extension, per session, so either side shows the other's change; the status bar shows `WhatsApp: watching`. It starts off in every new session and after Chrome or the extension restarts. Switching it on opens WhatsApp Web in the session's group when the group has none; messages already unread there do not ring.
 - **Diagnosis:** `/browser watch` shows when the tab last read its chat list and the last ring, to help diagnose a watch that does not ring.
 - **Allow list:** `/browser watch allow <chat name>`, `/browser watch remove <chat name>`, or the popup. Names match as WhatsApp shows them, ignoring case and extra spaces. Other chats never ring.
 - **Same name, no ring:** chats are matched by the name WhatsApp shows; when two rows share an allowed name, neither rings. The open chat shows no unread count, so its messages do not ring.

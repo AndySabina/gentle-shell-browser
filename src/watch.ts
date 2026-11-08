@@ -14,6 +14,10 @@ interface WatchState {
 	on: boolean;
 	allowed: string[];
 	whatsappTabs: number;
+	/** setWatch opened WhatsApp Web in the session's group, which had none. */
+	openedWhatsApp?: boolean;
+	/** setWatch could not open WhatsApp Web; the watch is on all the same. */
+	openWhatsAppError?: string;
 	lastRead?: { at: string; chats: number; allowed: { name: string; unread: number; typing?: boolean; ambiguous?: boolean }[] };
 	lastRing?: { chat: string; at: string; delivered: boolean; error?: string };
 }
@@ -40,6 +44,8 @@ type Send = (message: { customType: string; content: string; display: boolean; d
 
 function stateLines(state: WatchState): string[] {
 	const lines = [`Gentle Chrome: WhatsApp watch is ${state.on ? "on" : "off"} for this session.`];
+	if (state.openedWhatsApp) lines.push("Opened WhatsApp Web in this session's group: if WhatsApp asks for the QR code, log in there.");
+	if (state.openWhatsAppError) lines.push(`Could not open WhatsApp Web in this session's group (${state.openWhatsAppError}): open it there yourself so the watch can read it.`);
 	lines.push(state.allowed.length ? `Allowed chats: ${state.allowed.join(", ")}.` : "Allow list is empty: add a chat with /browser watch allow <chat name>.");
 	if (state.whatsappTabs === 0) lines.push("No WhatsApp Web tab in this session's group: ask the agent to open https://web.whatsapp.com/ first.");
 	const time = (at: string) => {
