@@ -2,13 +2,15 @@ import { execFile } from "node:child_process";
 import { constants } from "node:fs";
 import { access, realpath, stat } from "node:fs/promises";
 import { basename, isAbsolute } from "node:path";
+import { currentPlatform, type Platform } from "./platform.ts";
 
 /**
  * The session side of browser_act upload: every path is checked here, before
  * anything reaches Chrome. Sensitive files (keys, passwords, credentials) are
  * refused always, by the path the agent gave and by the file it resolves to.
- * Chrome runs on Windows while the files live in WSL, so each real path is
- * converted to one Chrome can read.
+ * With Gentle Shell in WSL, Chrome runs on Windows while the files live in
+ * WSL, so each real path is converted to one Chrome can read; a Chrome on the
+ * same system reads the real path as it is.
  */
 
 export const MAX_UPLOAD_FILES = 10;
@@ -103,11 +105,16 @@ export async function windowsPath(path: string, run: RunFile = runFile): Promise
 	return converted;
 }
 
+/** The path Chrome reads: converted for Windows Chrome on WSL, the same path elsewhere. */
+export async function chromePath(path: string, platform: Platform = currentPlatform(), run: RunFile = runFile): Promise<string> {
+	return platform === "wsl" ? windowsPath(path, run) : path;
+}
+
 const DEFAULT_DEPS: UploadDeps = {
 	realpath,
 	stat,
 	access: (path) => access(path, constants.R_OK),
-	convert: (path) => windowsPath(path),
+	convert: (path) => chromePath(path),
 };
 
 const refused = (text: string) => new Error(`Upload refused: ${text}`);

@@ -2,6 +2,10 @@
 # Copies extension/ to a Windows folder so Windows Chrome can load it unpacked
 # (Chrome does not load unpacked extensions reliably from \\wsl.localhost paths).
 #
+# On native Linux or macOS (no wslpath), or with GENTLE_CHROME_PLATFORM=linux or
+# darwin (a Linux Chrome inside WSL), it hands over to `npm run install-extension`
+# (node src/update.ts setup [folder]), which installs for the Chrome on this system.
+#
 # Usage: scripts/install-extension.sh [windows-target-dir]
 #   Default target: %USERPROFILE%\gentle-shell-chrome
 #   The target may be a Windows path (C:\Users\me\gentle-shell-chrome) or a WSL path (/mnt/c/...).
@@ -35,8 +39,11 @@ if [ "$#" -gt 1 ]; then
 	echo "Usage: $0 [windows-target-dir]" >&2
 	exit 2
 fi
-command -v wslpath >/dev/null || fail "wslpath not found: run this inside WSL."
 command -v node >/dev/null || fail "node not found: install Node 22.18 or newer."
+case "${GENTLE_CHROME_PLATFORM:-}" in
+linux | darwin) exec node "$root/src/update.ts" setup "$@" ;;
+esac
+command -v wslpath >/dev/null || exec node "$root/src/update.ts" setup "$@"
 [ -f "$source_dir/manifest.json" ] || fail "no extension/manifest.json under $root."
 
 if [ "$#" -eq 1 ]; then

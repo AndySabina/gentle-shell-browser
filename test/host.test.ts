@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { chmodSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, win32 } from "node:path";
 import { after, test } from "node:test";
 import { parseDiscovery } from "../extension/lib/sessions.js";
-import { encodeMessage, extensionIdFromKey, handleRequest, hostConfigDir, MessageReader, nativeHostFiles } from "../src/host.ts";
+import { encodeMessage, extensionIdFromKey, handleRequest, hostConfigDir, MessageReader, nativeHostFiles, posixHostFiles, windowsHostFiles } from "../src/host.ts";
 import { newSessionId, writeSessionRecord } from "../src/sessions.ts";
 import { loadOrCreateToken } from "../src/token.ts";
 
@@ -186,4 +186,68 @@ test("the host CLI answers a bad --config-dir with a framed host error and the r
 	assert.deepEqual(stdout, encodeMessage({ error: "host error" }));
 	assert.equal(stderr, "gentle-shell-host: --config-dir needs an absolute folder\n");
 	assert.deepEqual(readdirSync(dir), []);
+});
+
+const MANIFEST = {
+	name: "dev.gentle.shell",
+	description: "Gentle Shell browser bridge",
+	type: "stdio",
+	allowed_origins: ["chrome-extension://abcdefghijklmnopabcdefghijklmnop/"],
+};
+
+test("posixHostFiles builds the same manifest and a /bin/sh launcher with single-quoted paths", () => {
+	const options = { nodePath: "/opt/node/bin/node", hostScript: "/home/me/it's here/src/host.ts", extensionId: "abcdefghijklmnopabcdefghijklmnop", hostDir: "/home/me/gentle-shell-chrome-host", configDir: "/home/me/.config/gentle-chrome" };
+	assert.deepEqual(posixHostFiles(options), {
+		manifest: { ...MANIFEST, path: "/home/me/gentle-shell-chrome-host/gentle-shell-host.sh" },
+		launcher: "#!/bin/sh\nexec '/opt/node/bin/node' '/home/me/it'\\''s here/src/host.ts' --config-dir '/home/me/.config/gentle-chrome'\n",
+	});
+	// A line break would end the exec line; the shell quoting cannot hold one.
+	for (const unsafe of ["/a\nb", "/a\rb"]) {
+		for (const key of ["nodePath", "hostScript", "configDir", "hostDir"] as const) {
+			assert.throws(() => posixHostFiles({ ...options, [key]: unsafe }), { message: `Unsafe path for the native host: ${unsafe}` }, `${key} ${JSON.stringify(unsafe)}`);
+		}
+	}
+	assert.throws(() => posixHostFiles({ ...options, configDir: "config/gentle-chrome" }), { message: "Native host config folder must be an absolute path: config/gentle-chrome" });
+});
+
+test("windowsHostFiles builds the same manifest and a CRLF batch file that runs node.exe directly", () => {
+	const options = { nodePath: "C:\\Program Files\\nodejs\\node.exe", hostScript: "C:\\Users\\me\\gentle-shell-browser\\src\\host.ts", extensionId: "abcdefghijklmnopabcdefghijklmnop", hostDir: "C:\\Users\\me\\gentle-shell-chrome-host", configDir: "C:\\Users\\me\\.config\\gentle-chrome" };
+	assert.deepEqual(windowsHostFiles(options), {
+		manifest: { ...MANIFEST, path: "C:\\Users\\me\\gentle-shell-chrome-host\\gentle-shell-host.bat" },
+		bat: '@echo off\r\n"C:\\Program Files\\nodejs\\node.exe" "C:\\Users\\me\\gentle-shell-browser\\src\\host.ts" --config-dir "C:\\Users\\me\\.config\\gentle-chrome"\r\n',
+	});
+	for (const unsafe of ['C:\\no"de', "C:\\%PATH%\\node", "C:\\node\r\ncalc", "C:\\a^b", "C:\\a&calc", "C:\\a|calc", "C:\\a<b", "C:\\a>b"]) {
+		for (const key of ["nodePath", "hostScript", "configDir"] as const) {
+			assert.throws(() => windowsHostFiles({ ...options, [key]: unsafe }), { message: `Unsafe path for the native host: ${unsafe}` }, `${key} ${JSON.stringify(unsafe)}`);
+		}
+	}
+	assert.throws(() => windowsHostFiles({ ...options, configDir: "C:\\cfg\\" }), { message: "Unsafe path for the native host: C:\\cfg\\" });
+	assert.throws(() => windowsHostFiles({ ...options, configDir: "config\\gentle-chrome" }), { message: "Native host config folder must be an absolute path: config\\gentle-chrome" });
+});
+
+test("hostConfigDir takes a Windows absolute folder when told how Windows reads paths, and still refuses a relative one", () => {
+	assert.equal(hostConfigDir(["--config-dir", "C:\\Users\\you\\.config\\gentle-chrome"], {}, "C:\\Users\\you", win32.isAbsolute), "C:\\Users\\you\\.config\\gentle-chrome");
+	assert.throws(() => hostConfigDir(["--config-dir", "config\\gentle-chrome"], {}, "C:\\Users\\you", win32.isAbsolute), { message: "--config-dir needs an absolute folder" });
+	if (process.platform !== "win32") assert.throws(() => hostConfigDir(["--config-dir", "C:\\x"], {}, "/home/u"), { message: "--config-dir needs an absolute folder" });
+});
+
+test("the POSIX launcher starts the host bound to its folder and answers a framed discover", async () => {
+	const bound = join(scratch(), "it's config");
+	const hostDir = scratch();
+	const id = newSessionId();
+	writeSessionRecord(bound, { id, name: "linux", port: 48743, pid: process.pid });
+	const { launcher } = posixHostFiles({ nodePath: process.execPath, hostScript: new URL("../src/host.ts", import.meta.url).pathname, extensionId: "abcdefghijklmnopabcdefghijklmnop", hostDir, configDir: bound });
+	const path = join(hostDir, "gentle-shell-host.sh");
+	writeFileSync(path, launcher);
+	chmodSync(path, 0o755);
+	const child = spawn(path, ["chrome-extension://abcdefghijklmnopabcdefghijklmnop/"], { env: { PATH: "/usr/bin:/bin" }, stdio: ["pipe", "pipe", "pipe"] });
+	const stdout: Buffer[] = [];
+	let stderr = "";
+	child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
+	child.stderr.on("data", (chunk: Buffer) => (stderr += chunk));
+	child.stdin.end(encodeMessage({ type: "discover" }));
+	const code = await new Promise((resolve) => child.once("close", resolve));
+	assert.equal(stderr, "");
+	assert.equal(code, 0);
+	assert.deepEqual(Buffer.concat(stdout), encodeMessage({ token: loadOrCreateToken(bound), sessions: [{ id, name: "linux", port: 48743 }] }));
 });

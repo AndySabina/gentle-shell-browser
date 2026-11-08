@@ -12,6 +12,9 @@ import { listSessions } from "../src/sessions.ts";
 import { loadOrCreateToken } from "../src/token.ts";
 import { buildId, installExtension } from "../src/update.ts";
 
+// The tests without an injected platform describe WSL's install command, whatever system runs them.
+process.env.GENTLE_CHROME_PLATFORM = "wsl";
+
 const ORIGIN = "chrome-extension://abcdefghijklmnopabcdefghijklmnop";
 
 /** The extension's side of the handshake, with `token`. */
@@ -313,6 +316,25 @@ test("the install hint quotes a config folder with a single quote for the shell"
 		assert.equal(ctl.status()[1], `Gentle Chrome: config folder ${configDir}; no Chrome helper installation is recorded for this folder; host binding is unknown: run GENTLE_CHROME_CONFIG_DIR='${configDir.replace("'", "'\\''")}' scripts/install-extension.sh in the gentle-shell-browser folder.`);
 	} finally {
 		await ctl.stop();
+	}
+});
+
+test("the install hint names npm run install-extension on Linux and macOS, and the PowerShell form on Windows", async () => {
+	const configDir = join(mkdtempSync(join(tmpdir(), "gentle-chrome-ctl-")), "it's");
+	const hints = {
+		linux: `run GENTLE_CHROME_CONFIG_DIR='${configDir.replace("'", "'\\''")}' npm run install-extension in the gentle-shell-browser folder.`,
+		darwin: `run GENTLE_CHROME_CONFIG_DIR='${configDir.replace("'", "'\\''")}' npm run install-extension in the gentle-shell-browser folder.`,
+		win32: `run $env:GENTLE_CHROME_CONFIG_DIR='${configDir.replace("'", "''")}'; npm run install-extension in PowerShell, in the gentle-shell-browser folder.`,
+	};
+	for (const [platform, hint] of Object.entries(hints) as ["linux" | "darwin" | "win32", string][]) {
+		const { ctl } = controller({ configDir, platform });
+		try {
+			await ctl.start();
+			assert.equal(ctl.status()[1], `Gentle Chrome: config folder ${configDir}; no Chrome helper installation is recorded for this folder; host binding is unknown: ${hint}`, platform);
+			assert.deepEqual(await ctl.update(), ["Gentle Chrome: no extension folder recorded; run npm run install-extension once to enable automatic updates."], platform);
+		} finally {
+			await ctl.stop();
+		}
 	}
 });
 

@@ -7,6 +7,10 @@ import { test } from "node:test";
 import { EXTENSION_ID } from "../src/host.ts";
 import { buildId, hostBinding, installExtension, REPO_EXTENSION_DIR, recordedTarget } from "../src/update.ts";
 
+// The tests without an injected platform describe the WSL install, whatever system runs them,
+// so none of them writes into this account's Chrome folders.
+process.env.GENTLE_CHROME_PLATFORM = "wsl";
+
 function scratch(): string {
 	return mkdtempSync(join(tmpdir(), "gentle-chrome-update-"));
 }
@@ -390,4 +394,217 @@ test("the worker reports the build its own code was installed with, not the buil
 	assert.match(worker, /^import \{ BUILD \} from "\.\/build\.js";$/m);
 	assert.equal(worker.includes("build.json"), false);
 	assert.equal(readFileSync(join(REPO_EXTENSION_DIR, "build.js"), "utf8"), '// Written by install; the build this copy\'s code belongs to.\nexport const BUILD = "unknown";\n');
+});
+
+/** The helper's manifest for the launcher at `path`, keys in the order install writes them. */
+function manifestFor(path: string) {
+	return { name: "dev.gentle.shell", description: "Gentle Shell browser bridge", path, type: "stdio", allowed_origins: [`chrome-extension://${EXTENSION_ID}/`] };
+}
+
+/** Install deps for a native Linux or macOS Chrome, with `home` as the account's home. */
+function nativeDeps(platform: "linux" | "darwin", home: string, env: Record<string, string | undefined> = {}, nodePath = "/usr/bin/node") {
+	return { platform, home, env, nodePath, hostScript: "/home/me/it's/src/host.ts" };
+}
+
+test("installExtension on Linux writes a shell launcher and the manifest into Chrome's folder, and Chromium's when it is there", () => {
+	const sourceDir = source();
+	const targetDir = join(scratch(), "gentle-shell-chrome");
+	const configDir = scratch();
+	const home = scratch();
+	mkdirSync(join(home, ".config", "chromium"), { recursive: true });
+	const deps = nativeDeps("linux", home);
+	const result = installExtension({ sourceDir, targetDir, configDir, deps });
+	const hostDir = `${targetDir}-host`;
+	assert.deepEqual(result, { build: buildId(sourceDir), targetDir, hostDir, registered: true });
+	assert.deepEqual(readdirSync(hostDir).sort(), ["dev.gentle.shell.json", "gentle-shell-host.sh"]);
+	const launcher = join(hostDir, "gentle-shell-host.sh");
+	assert.equal(readFileSync(launcher, "utf8"), `#!/bin/sh\nexec '/usr/bin/node' '/home/me/it'\\''s/src/host.ts' --config-dir '${configDir}'\n`);
+	assert.equal(statSync(launcher).mode & 0o777, 0o755);
+	const manifest = `${JSON.stringify(manifestFor(launcher), null, 2)}\n`;
+	assert.equal(readFileSync(join(hostDir, "dev.gentle.shell.json"), "utf8"), manifest);
+	for (const dir of [".config/google-chrome/NativeMessagingHosts", ".config/chromium/NativeMessagingHosts"]) {
+		assert.equal(readFileSync(join(home, dir, "dev.gentle.shell.json"), "utf8"), manifest, dir);
+	}
+	assert.equal(recordedTarget(configDir), targetDir);
+	// The same manifests again: nothing to register.
+	assert.equal(installExtension({ sourceDir, targetDir, configDir, deps }).registered, false);
+});
+
+test("installExtension on Linux writes the manifest only into GENTLE_CHROME_NATIVE_HOSTS_DIR when it is set", () => {
+	const sourceDir = source();
+	const targetDir = join(scratch(), "gentle-shell-chrome");
+	const home = scratch();
+	const brave = join(scratch(), "BraveSoftware", "Brave-Browser", "NativeMessagingHosts");
+	const result = installExtension({ sourceDir, targetDir, configDir: scratch(), deps: nativeDeps("linux", home, { GENTLE_CHROME_NATIVE_HOSTS_DIR: brave }) });
+	assert.equal(result.registered, true);
+	assert.deepEqual(readdirSync(brave), ["dev.gentle.shell.json"]);
+	assert.equal(JSON.parse(readFileSync(join(brave, "dev.gentle.shell.json"), "utf8")).path, join(`${targetDir}-host`, "gentle-shell-host.sh"));
+	assert.deepEqual(readdirSync(home), []);
+});
+
+test("installExtension on macOS writes the manifest into Chrome's Application Support folder", () => {
+	const sourceDir = source();
+	const targetDir = join(scratch(), "gentle-shell-chrome");
+	const home = scratch();
+	installExtension({ sourceDir, targetDir, configDir: scratch(), deps: nativeDeps("darwin", home) });
+	const manifest = join(home, "Library", "Application Support", "Google", "Chrome", "NativeMessagingHosts", "dev.gentle.shell.json");
+	assert.equal(JSON.parse(readFileSync(manifest, "utf8")).path, join(`${targetDir}-host`, "gentle-shell-host.sh"));
+	assert.equal(existsSync(join(home, "Library", "Application Support", "Chromium")), false);
+});
+
+test("installExtension on Linux refuses a path the launcher cannot hold and writes nothing", () => {
+	const sourceDir = source();
+	const targetDir = join(scratch(), "gentle-shell-chrome");
+	const configDir = join(scratch(), "line\nbreak");
+	const home = scratch();
+	assert.throws(() => installExtension({ sourceDir, targetDir, configDir, deps: nativeDeps("linux", home) }), { message: `Unsafe path for the native host: ${configDir}` });
+	assert.equal(existsSync(targetDir), false);
+	assert.equal(existsSync(`${targetDir}-host`), false);
+	assert.equal(existsSync(configDir), false);
+	assert.deepEqual(readdirSync(home), []);
+});
+
+test("installExtension on Linux refuses a foreign host folder and leaves everything untouched", () => {
+	const sourceDir = source();
+	const targetDir = join(scratch(), "gentle-shell-chrome");
+	const home = scratch();
+	const hostDir = `${targetDir}-host`;
+	mkdirSync(hostDir);
+	writeFileSync(join(hostDir, "notes.txt"), "mine");
+	assert.throws(() => installExtension({ sourceDir, targetDir, configDir: scratch(), deps: nativeDeps("linux", home) }), {
+		message: `${hostDir} is not empty and is not a previous Gentle Shell native host folder. Move it away or choose another extension folder.`,
+	});
+	assert.deepEqual(readdirSync(hostDir), ["notes.txt"]);
+	assert.equal(existsSync(targetDir), false);
+	assert.deepEqual(readdirSync(home), []);
+});
+
+/** Install deps for native Windows Chrome, recording registry writes instead of touching the registry. */
+function windowsDeps(current: () => string | undefined, nodePath = "C:\\Program Files\\nodejs\\node.exe") {
+	const registered: string[] = [];
+	const deps = {
+		platform: "win32" as const,
+		home: scratch(),
+		env: {},
+		nodePath,
+		hostScript: "C:\\Users\\me\\gentle-shell-browser\\src\\host.ts",
+		queryRegistry: current,
+		register: (path: string) => {
+			registered.push(path);
+		},
+	};
+	return { deps, registered };
+}
+
+test("installExtension on Windows writes a .bat that runs node.exe and registers the manifest under HKCU", () => {
+	const sourceDir = source();
+	const targetDir = join(scratch(), "gentle-shell-chrome");
+	const configDir = scratch();
+	const { deps, registered } = windowsDeps(() => undefined);
+	const result = installExtension({ sourceDir, targetDir, configDir, deps });
+	const hostDir = `${targetDir}-host`;
+	assert.deepEqual(result, { build: buildId(sourceDir), targetDir, hostDir, registered: true });
+	assert.deepEqual(readdirSync(hostDir).sort(), ["dev.gentle.shell.json", "gentle-shell-host.bat"]);
+	assert.equal(readFileSync(join(hostDir, "gentle-shell-host.bat"), "utf8"), `@echo off\r\n"C:\\Program Files\\nodejs\\node.exe" "C:\\Users\\me\\gentle-shell-browser\\src\\host.ts" --config-dir "${configDir}"\r\n`);
+	assert.equal(readFileSync(join(hostDir, "dev.gentle.shell.json"), "utf8"), `${JSON.stringify(manifestFor(`${hostDir}\\gentle-shell-host.bat`), null, 2)}\n`);
+	assert.deepEqual(registered, [`${hostDir}\\dev.gentle.shell.json`]);
+	const again = windowsDeps(() => registered[0]);
+	assert.equal(installExtension({ sourceDir, targetDir, configDir, deps: again.deps }).registered, false);
+	assert.deepEqual(again.registered, []);
+});
+
+test("installExtension on Windows refuses an unsafe path and registers nothing", () => {
+	const sourceDir = source();
+	const targetDir = join(scratch(), "gentle-shell-chrome");
+	const configDir = join(scratch(), "100%config");
+	const { deps, registered } = windowsDeps(() => undefined);
+	assert.throws(() => installExtension({ sourceDir, targetDir, configDir, deps }), { message: `Unsafe path for the native host: ${configDir}` });
+	assert.equal(existsSync(targetDir), false);
+	assert.equal(existsSync(`${targetDir}-host`), false);
+	assert.deepEqual(registered, []);
+});
+
+test("hostBinding reads a Linux or macOS shell launcher: bound, mismatched, unbound and stale", () => {
+	const sourceDir = source();
+	const targetDir = join(scratch(), "gentle-shell-chrome");
+	const home = scratch();
+	const session = join(scratch(), "it's config");
+	const outside = scratch();
+	const hostDir = `${targetDir}-host`;
+	installExtension({ sourceDir, targetDir, configDir: session, deps: nativeDeps("linux", home, {}, process.execPath) });
+	assert.deepEqual(hostBinding(session), { state: "bound", hostDir });
+	installExtension({ sourceDir, targetDir, configDir: outside, deps: nativeDeps("linux", home, {}, process.execPath) });
+	assert.deepEqual(hostBinding(session), { state: "mismatched", hostDir, boundTo: outside });
+	writeFileSync(join(hostDir, "gentle-shell-host.sh"), `#!/bin/sh\nexec '${process.execPath}' '/x/src/host.ts'\n`);
+	assert.deepEqual(hostBinding(outside), { state: "unbound", hostDir });
+	const gone = join(scratch(), "runtime", "bin", "node");
+	installExtension({ sourceDir, targetDir, configDir: session, deps: nativeDeps("darwin", home, {}, gone) });
+	assert.deepEqual(hostBinding(session), { state: "stale", hostDir, nodePath: gone });
+});
+
+test("hostBinding reads a native Windows .bat: bound, and stale when its node.exe is gone", () => {
+	const sourceDir = source();
+	const targetDir = join(scratch(), "gentle-shell-chrome");
+	const configDir = scratch();
+	const hostDir = `${targetDir}-host`;
+	installExtension({ sourceDir, targetDir, configDir, deps: windowsDeps(() => undefined, process.execPath).deps });
+	assert.deepEqual(hostBinding(configDir), { state: "bound", hostDir });
+	const gone = join(scratch(), "nodejs", "node.exe");
+	installExtension({ sourceDir, targetDir, configDir, deps: windowsDeps(() => undefined, gone).deps });
+	assert.deepEqual(hostBinding(configDir), { state: "stale", hostDir, nodePath: gone });
+});
+
+/** Runs `node src/update.ts <args>` with only scratch folders in its environment. */
+function cli(args: string[], env: Record<string, string>) {
+	const result = spawnSync(process.execPath, [new URL("../src/update.ts", import.meta.url).pathname, ...args], {
+		env: { PATH: process.env.PATH ?? "/usr/bin:/bin", ...env },
+		encoding: "utf8",
+		timeout: 30_000,
+		killSignal: "SIGKILL",
+	});
+	assert.equal(result.error, undefined, `update.ts failed to run: ${result.error}`);
+	return { code: result.status, stdout: result.stdout, stderr: result.stderr };
+}
+
+test("setup on Linux installs into the given folder and says where the helper is registered and how to load the extension", () => {
+	const dir = scratch();
+	const env = {
+		GENTLE_CHROME_PLATFORM: "linux",
+		GENTLE_CHROME_NATIVE_HOSTS_DIR: join(dir, "nmh"),
+		GENTLE_CHROME_CONFIG_DIR: join(dir, "cfg"),
+		GENTLE_CHROME_DURABLE_DIR: join(dir, "durable"),
+	};
+	const target = join(dir, "ext");
+	const { code, stdout, stderr } = cli(["setup", target], env);
+	assert.equal(stderr, "");
+	assert.equal(code, 0);
+	const version = JSON.parse(readFileSync(join(REPO_EXTENSION_DIR, "manifest.json"), "utf8")).version;
+	assert.equal(
+		stdout,
+		[
+			`Copied Gentle Shell Browser ${version} (build ${buildId(REPO_EXTENSION_DIR)}) to ${target}`,
+			`Native host written to ${target}-host`,
+			`Registered for Chrome: ${join(dir, "nmh", "dev.gentle.shell.json")}`,
+			"",
+			"First time: open chrome://extensions in Chrome, turn on Developer mode,",
+			'press "Load unpacked" and choose:',
+			`  ${target}`,
+			"",
+			"After that first load, Gentle Shell updates the extension by itself whenever it",
+			"connects with an older build.",
+			"",
+		].join("\n"),
+	);
+	assert.equal(statSync(join(`${target}-host`, "gentle-shell-host.sh")).mode & 0o777, 0o755);
+	assert.equal(readFileSync(join(dir, "cfg", "extension-target"), "utf8"), `${target}\n`);
+	assert.equal(readFileSync(join(dir, "durable", "extension-target"), "utf8"), `${target}\n`);
+	// Run again: the helper is already registered there.
+	assert.match(cli(["setup", target], env).stdout, new RegExp(`^Already registered for Chrome: ${join(dir, "nmh", "dev.gentle.shell.json").replaceAll("/", "\\/")}$`, "m"));
+});
+
+test("setup on WSL without a folder points to the install script and writes nothing", () => {
+	const dir = scratch();
+	const env = { GENTLE_CHROME_PLATFORM: "wsl", GENTLE_CHROME_NATIVE_HOSTS_DIR: join(dir, "nmh"), GENTLE_CHROME_CONFIG_DIR: join(dir, "cfg"), GENTLE_CHROME_DURABLE_DIR: join(dir, "durable") };
+	assert.deepEqual(cli(["setup"], env), { code: 1, stdout: "", stderr: "install-extension: on WSL run scripts/install-extension.sh: it finds your Windows profile folder.\n" });
+	assert.deepEqual(readdirSync(dir), []);
 });
