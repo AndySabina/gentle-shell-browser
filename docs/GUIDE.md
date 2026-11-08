@@ -198,10 +198,12 @@ Good to know:
 - `/browser watch` shows when the tab last read its chat list and the last ring, to help diagnose a watch that does not ring.
 - It starts **off** in every new session, and again after Chrome or the extension restarts (an update included).
 - Messages that were already unread when you switched it on do not ring; only new ones do, once each.
+- A message that already rang does not ring again, even if WhatsApp shows it as unread again after the agent replied. Each chat remembers its last 20 such messages. New messages in a chat that still had unread ones always ring; only right after the chat was read, a new message with exactly the same text as a remembered one (say a second "ok") does not ring.
+- When someone sends several messages in a row, the agent gets one ring for them, not one per message, and answers them together. If a ring arrives when there is nothing new in the chat, the agent does not reply.
 - Chats are matched by the name WhatsApp shows. If two chats in the list have an allowed name (say someone adds you to a group called like your contact), neither rings, so a look-alike cannot get an answer.
 - Messages in the chat you have open in WhatsApp do not ring: WhatsApp shows no unread count for it. The agent closes the chat after replying; if you open one in the agent's WhatsApp tab, close it again (Escape).
 - While someone is typing or recording, WhatsApp shows "typing…" instead of the message: that never rings, and the message rings once its text shows.
-- Chrome, the WhatsApp tab and the Gentle Shell session must stay open. A busy session answers when it finishes its current work.
+- Chrome, the WhatsApp tab and the Gentle Shell session must stay open. A busy session answers when it finishes its current work: messages that arrive meanwhile ring after it finishes, and only if the chat still has unread messages.
 - The replies are real steps and follow your [permission mode](#5-permission-modes): in **Always ask**, every reply waits for you. To let it answer unattended, use **Remember my decisions** and save "Always allow" for `web.whatsapp.com`, or **Never ask**.
 - The agent is told that the chat's text is untrusted and never an order: someone who writes "ignore your rules" does not get to steer it.
 - With the watch off, nothing reads your chats: the reader is added to the WhatsApp tab only while the watch is on.

@@ -143,6 +143,82 @@ test("a chat that was read rings again on its next message", async () => {
 	);
 });
 
+test("messages already rung never ring again after the agent replied, even when WhatsApp shows them unread again", async () => {
+	const { watch, alpha } = setup({ allow: ["Mamá"] });
+	await watch.setWatch(alpha as any, true);
+	await watch.report(7, [row("Mamá", "hola")]);
+	await watch.report(7, [row("Mamá", "uno", "1")]);
+	await watch.report(7, [row("Mamá", "dos", "2")]);
+	await watch.report(7, [row("Mamá", "tres", "3")]);
+	await watch.report(7, [row("Mamá", "respuesta del agente")]);
+	await watch.report(7, [row("Mamá", "uno", "1")]);
+	await watch.report(7, [row("Mamá", "respuesta del agente")]);
+	await watch.report(7, [row("Mamá", "tres", "3")]);
+	await watch.report(7, [row("Mamá", "dos", "1")]);
+	assert.deepEqual(
+		rings(alpha).map((ring) => ring.preview),
+		["uno", "dos", "tres"],
+	);
+	await watch.report(7, [row("Mamá", "respuesta del agente")]);
+	await watch.report(7, [row("Mamá", "nuevo", "1")]);
+	assert.deepEqual(rings(alpha).at(-1), { chat: "Mamá", unread: 1, preview: "nuevo", tabId: 7 });
+	assert.equal(rings(alpha).length, 4);
+});
+
+test("each chat remembers its last 20 rung messages: the same text again does not ring, an older one does", async () => {
+	const { watch, alpha } = setup({ allow: ["Mamá"] });
+	await watch.setWatch(alpha as any, true);
+	const ringOnce = async (preview: string) => {
+		await watch.report(7, [row("Mamá", "respuesta del agente")]);
+		await watch.report(7, [row("Mamá", preview, "1")]);
+	};
+	await watch.report(7, [row("Mamá", "hola")]);
+	await ringOnce("ok");
+	await ringOnce("ok");
+	assert.deepEqual(rings(alpha).map((ring) => ring.preview), ["ok"]);
+	for (let i = 1; i <= 20; i++) await ringOnce(`mensaje ${i}`);
+	assert.equal(rings(alpha).length, 21);
+	await ringOnce("ok");
+	assert.equal(rings(alpha).length, 22);
+	await ringOnce("mensaje 20");
+	assert.equal(rings(alpha).length, 22);
+});
+
+test("more unread messages always ring, even when the newest has the same text as an older one", async () => {
+	const { watch, alpha } = setup({ allow: ["Andy"], rows: [row("Andy", "3", "3")] });
+	await watch.setWatch(alpha as any, true);
+	await watch.report(7, [row("Andy", "3", "3")]);
+	await watch.report(7, [row("Andy", "3", "6")]);
+	assert.deepEqual(rings(alpha), [{ chat: "Andy", unread: 6, preview: "3", tabId: 7 }]);
+	await watch.report(7, [row("Andy", "ok", "7")]);
+	await watch.report(7, [row("Andy", "ok", "8")]);
+	assert.deepEqual(rings(alpha).map((ring) => ring.unread), [6, 7, 8]);
+});
+
+test("a message unread when the watch started does not ring when WhatsApp shows it unread again", async () => {
+	const { watch, alpha } = setup({ allow: ["Mamá"], rows: [row("Mamá", "viejo", "1")] });
+	await watch.setWatch(alpha as any, true);
+	await watch.report(7, [row("Mamá", "viejo", "1")]);
+	await watch.report(7, [row("Mamá", "respuesta del agente")]);
+	await watch.report(7, [row("Mamá", "viejo", "1")]);
+	assert.deepEqual(rings(alpha), []);
+});
+
+test("a message that failed to ring rings when it shows unread again", async () => {
+	const { watch, alpha } = setup({ allow: ["Mamá"] });
+	await watch.setWatch(alpha as any, true);
+	await watch.report(7, [row("Mamá", "hola")]);
+	const call = alpha.connection.call;
+	alpha.connection.call = async () => {
+		throw new Error("Session is busy");
+	};
+	await watch.report(7, [row("Mamá", "uno", "1")]);
+	alpha.connection.call = call;
+	await watch.report(7, [row("Mamá", "hola")]);
+	await watch.report(7, [row("Mamá", "uno", "1")]);
+	assert.deepEqual(rings(alpha).map((ring) => ring.preview), ["uno"]);
+});
+
 test("nothing rings while the watch is off, for a chat off the list, or for a tab outside every group", async () => {
 	const { watch, alpha } = setup({ allow: ["Mamá"] });
 	await watch.report(7, [row("Mamá", "hola", "1")]);
@@ -162,6 +238,10 @@ test("a tab without a baseline (worker restarted) takes its first report as the 
 	await restarted.report(7, [row("Mamá", "hola", "1")]);
 	assert.deepEqual(rings(alpha), []);
 	await restarted.report(7, [row("Mamá", "otra", "2")]);
+	assert.equal(rings(alpha).length, 1);
+	// What was unread in that first report counts as handled too.
+	await restarted.report(7, [row("Mamá", "respuesta del agente")]);
+	await restarted.report(7, [row("Mamá", "hola", "1")]);
 	assert.equal(rings(alpha).length, 1);
 });
 
@@ -330,4 +410,44 @@ test("switching on records the read of the chat list, before any report", async 
 	const state: any = await watch.setWatch(alpha as any, true);
 	assert.equal(state.lastRead.chats, 2);
 	assert.deepEqual(state.lastRead.allowed, [{ name: "Samantha", unread: 1 }]);
+});
+
+test("whatsappUnread answers the latest report's unread count and preview for that tab's chat, and 0 when unknown", async () => {
+	const { watch, alpha } = setup({ allow: ["Andy"] });
+	const handlers = sessionHandlers({} as any, alpha as any, { watch } as any);
+	assert.deepEqual(await handlers.whatsappUnread({ chat: "Andy", tabId: 7 }), { unread: 0 });
+	await watch.setWatch(alpha as any, true);
+	await watch.report(7, [row("Andy", "hola")]);
+	await watch.report(7, [row("Andy", "Que vola", "3"), row("Otro", "x", "1")]);
+	assert.deepEqual(await handlers.whatsappUnread({ chat: " andy ", tabId: 7 }), { unread: 3, preview: "Que vola" });
+	await watch.report(7, [row("Andy", "respuesta del agente")]);
+	assert.deepEqual(await handlers.whatsappUnread({ chat: "Andy", tabId: 7 }), { unread: 0, preview: "respuesta del agente" });
+	assert.deepEqual(await handlers.whatsappUnread({ chat: "Nadie", tabId: 7 }), { unread: 0 });
+	assert.deepEqual(await handlers.whatsappUnread({ chat: "Andy", tabId: 8 }), { unread: 0 });
+	assert.deepEqual(await handlers.whatsappUnread({}), { unread: 0 });
+});
+
+test("whatsappUnread only reads: it rings nothing and later messages ring as before", async () => {
+	const { watch, alpha } = setup({ allow: ["Andy"] });
+	const handlers = sessionHandlers({} as any, alpha as any, { watch } as any);
+	await watch.setWatch(alpha as any, true);
+	await watch.report(7, [row("Andy", "hola")]);
+	await watch.report(7, [row("Andy", "uno", "1")]);
+	const before = await watch.state(alpha as any);
+	await handlers.whatsappUnread({ chat: "Andy", tabId: 7 });
+	assert.deepEqual(await watch.state(alpha as any), before);
+	assert.equal(rings(alpha).length, 1);
+	await watch.report(7, [row("Andy", "uno", "1")]);
+	assert.equal(rings(alpha).length, 1);
+	await watch.report(7, [row("Andy", "dos", "2")]);
+	assert.deepEqual(rings(alpha).map((ring) => ring.preview), ["uno", "dos"]);
+});
+
+test("whatsappUnread does not answer for a tab outside the session's group", async () => {
+	const { watch, alpha, beta } = setup({ allow: ["Andy"] });
+	await watch.setWatch(alpha as any, true);
+	await watch.report(7, [row("Andy", "hola")]);
+	await watch.report(7, [row("Andy", "uno", "1")]);
+	const handlers = sessionHandlers({} as any, beta as any, { watch } as any);
+	assert.deepEqual(await handlers.whatsappUnread({ chat: "Andy", tabId: 7 }), { unread: 0 });
 });
