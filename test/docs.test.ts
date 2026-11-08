@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { test } from "node:test";
@@ -26,6 +27,35 @@ function publicTextFiles(): string[] {
 	walk(join(root, "docs"));
 	files.push(readmePath, join(root, "scripts/capture-screenshots.sh"));
 	return files.filter((path) => existsSync(path));
+}
+
+/** Binary files the privacy check skips: they carry no text a person wrote. */
+const BINARY = /\.(png|woff2)$/;
+/** Third-party notices whose license requires keeping their authors' contact lines. */
+const THIRD_PARTY = new Set(["extension/fonts/OFL.txt"]);
+
+/**
+ * Every file the repository publishes: `git ls-files` in a checkout, otherwise
+ * every file outside node_modules and .git. The git-ignored private terms list
+ * is never one of them.
+ */
+function publishedFiles(): string[] {
+	let names: string[];
+	try {
+		names = execFileSync("git", ["ls-files", "-z"], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).split("\0").filter(Boolean);
+	} catch {
+		names = [];
+		const walk = (dir: string) => {
+			for (const name of readdirSync(join(root, dir))) {
+				const path = dir ? `${dir}/${name}` : name;
+				if (name === "node_modules" || name === ".git") continue;
+				if (statSync(join(root, path)).isDirectory()) walk(path);
+				else names.push(path);
+			}
+		};
+		walk("");
+	}
+	return names.filter((name) => name !== "test/.private-terms" && !BINARY.test(name) && !THIRD_PARTY.has(name) && existsSync(join(root, name))).map((name) => join(root, name));
 }
 
 test("docs/GUIDE.md exists and the README links to it", () => {
@@ -82,7 +112,7 @@ test("the README and the guide name `gentle-shell install` and ~/.gentle-shell o
 	}
 });
 
-test("docs, README and the capture script carry no personal data", () => {
+test("no published file carries personal data", () => {
 	// The project's public repository URL is the only allowed mention of the owner's account.
 	const allowed = /github\.com\/[A-Za-z0-9-]+\/gentle-shell-browser/g;
 	// Generic leaks: real home folders and real email addresses. Placeholders (you, me, <user>) and
@@ -91,15 +121,21 @@ test("docs, README and the capture script carry no personal data", () => {
 	const forbidden = [
 		/\/home\/(?!you\/|me\/|u\/)[a-z][a-z0-9_-]*\//i,
 		/C:\\{1,2}Users\\{1,2}(?!(?:you|me|<user>)\\)[a-z][a-z0-9_-]*\\/i,
-		/[A-Za-z0-9._%+-]+@(?!example\.(?:com|org)\b|users\.noreply\.)[A-Za-z0-9-]+\.[A-Za-z]{2,}/,
+		// Reserved names (RFC 2606: .test, .example, .invalid) can never be real addresses.
+		/[A-Za-z0-9._%+-]+@(?!example\.(?:com|org)\b|users\.noreply\.|[A-Za-z0-9-]+\.(?:test|example|invalid)\b)[A-Za-z0-9-]+\.[A-Za-z]{2,}/,
 		...privateTerms().map((term) => new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i")),
 	];
-	const files = publicTextFiles();
-	assert.ok(files.includes(guidePath));
+	const files = publishedFiles();
+	assert.ok(files.includes(guidePath) && files.includes(join(root, "src/update.ts")), "the check covers docs and code");
 	for (const file of files) {
 		const text = readFileSync(file, "utf8").replace(allowed, "");
 		for (const pattern of forbidden) assert.doesNotMatch(text, pattern, `${relative(root, file)} matches a forbidden pattern`);
 	}
+});
+
+test("private task notes under odd/ are never published", () => {
+	assert.match(read(join(root, ".gitignore")), /^odd\/$/m, ".gitignore lists odd/");
+	assert.deepEqual(publishedFiles().filter((file) => relative(root, file).startsWith("odd/")), []);
 });
 
 function privateTerms(): string[] {
