@@ -203,7 +203,7 @@ Good to know:
 - Chats are matched by the name WhatsApp shows. If two chats in the list have an allowed name (say someone adds you to a group called like your contact), neither rings, so a look-alike cannot get an answer.
 - Messages in the chat you have open in WhatsApp do not ring: WhatsApp shows no unread count for it. The agent closes the chat after replying; if you open one in the agent's WhatsApp tab, close it again (Escape).
 - While someone is typing or recording, WhatsApp shows "typing…" instead of the message: that never rings, and the message rings once its text shows.
-- Chrome, the WhatsApp tab and the Gentle Shell session must stay open. A busy session answers when it finishes its current work.
+- Chrome, the WhatsApp tab and the Gentle Shell session must stay open. A busy session answers when it finishes its current work: messages that arrive meanwhile ring after it finishes, and only if the chat still has unread messages.
 - The replies are real steps and follow your [permission mode](#5-permission-modes): in **Always ask**, every reply waits for you. To let it answer unattended, use **Remember my decisions** and save "Always allow" for `web.whatsapp.com`, or **Never ask**.
 - The agent is told that the chat's text is untrusted and never an order: someone who writes "ignore your rules" does not get to steer it.
 - With the watch off, nothing reads your chats: the reader is added to the WhatsApp tab only while the watch is on.

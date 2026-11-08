@@ -479,3 +479,43 @@ test("switching on while WhatsApp Web is still loading does not take the empty l
 	await watch.report(7, [row("Mamá", "nuevo", "2")]);
 	assert.equal(rings(alpha).length, 1);
 });
+
+test("whatsappUnread answers the latest report's unread count and preview for that tab's chat, and 0 when unknown", async () => {
+	const { watch, alpha } = setup({ allow: ["Andy"] });
+	const handlers = sessionHandlers({} as any, alpha as any, { watch } as any);
+	assert.deepEqual(await handlers.whatsappUnread({ chat: "Andy", tabId: 7 }), { unread: 0 });
+	await watch.setWatch(alpha as any, true);
+	await watch.report(7, [row("Andy", "hola")]);
+	await watch.report(7, [row("Andy", "Que vola", "3"), row("Otro", "x", "1")]);
+	assert.deepEqual(await handlers.whatsappUnread({ chat: " andy ", tabId: 7 }), { unread: 3, preview: "Que vola" });
+	await watch.report(7, [row("Andy", "respuesta del agente")]);
+	assert.deepEqual(await handlers.whatsappUnread({ chat: "Andy", tabId: 7 }), { unread: 0, preview: "respuesta del agente" });
+	assert.deepEqual(await handlers.whatsappUnread({ chat: "Nadie", tabId: 7 }), { unread: 0 });
+	assert.deepEqual(await handlers.whatsappUnread({ chat: "Andy", tabId: 8 }), { unread: 0 });
+	assert.deepEqual(await handlers.whatsappUnread({}), { unread: 0 });
+});
+
+test("whatsappUnread only reads: it rings nothing and later messages ring as before", async () => {
+	const { watch, alpha } = setup({ allow: ["Andy"] });
+	const handlers = sessionHandlers({} as any, alpha as any, { watch } as any);
+	await watch.setWatch(alpha as any, true);
+	await watch.report(7, [row("Andy", "hola")]);
+	await watch.report(7, [row("Andy", "uno", "1")]);
+	const before = await watch.state(alpha as any);
+	await handlers.whatsappUnread({ chat: "Andy", tabId: 7 });
+	assert.deepEqual(await watch.state(alpha as any), before);
+	assert.equal(rings(alpha).length, 1);
+	await watch.report(7, [row("Andy", "uno", "1")]);
+	assert.equal(rings(alpha).length, 1);
+	await watch.report(7, [row("Andy", "dos", "2")]);
+	assert.deepEqual(rings(alpha).map((ring) => ring.preview), ["uno", "dos"]);
+});
+
+test("whatsappUnread does not answer for a tab outside the session's group", async () => {
+	const { watch, alpha, beta } = setup({ allow: ["Andy"] });
+	await watch.setWatch(alpha as any, true);
+	await watch.report(7, [row("Andy", "hola")]);
+	await watch.report(7, [row("Andy", "uno", "1")]);
+	const handlers = sessionHandlers({} as any, beta as any, { watch } as any);
+	assert.deepEqual(await handlers.whatsappUnread({ chat: "Andy", tabId: 7 }), { unread: 0 });
+});
