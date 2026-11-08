@@ -24,6 +24,7 @@
 	],
 	"scripts": {
 		"test": "node --test \"test/**/*.test.ts\"",
+		"install-extension": "node src/update.ts setup",
 		"typecheck": "tsc --noEmit"
 	},
 	"engines": {

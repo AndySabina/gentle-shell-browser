@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { execFileSync } from "node:child_process";
-import { isSensitivePath, MAX_UPLOAD_FILES, prepareUpload, windowsPath } from "../src/upload.ts";
+import { chromePath, isSensitivePath, MAX_UPLOAD_FILES, prepareUpload, windowsPath } from "../src/upload.ts";
 
 // Every file lives in a fresh temp folder: the real home is never touched.
 const root = realpathSync(mkdtempSync(join(tmpdir(), "gentle-upload-")));
@@ -164,6 +164,32 @@ test("windowsPath turns /mnt/<drive>/ paths into drive paths and asks wslpath -w
 	assert.deepEqual(runs, []);
 	assert.equal(await windowsPath("/srv/a b.docx", run), "\\\\wsl.localhost\\Ubuntu\\srv\\a b.docx");
 	assert.deepEqual(runs, [["wslpath", "-w", "/srv/a b.docx"]]);
+});
+
+test("chromePath converts for Windows Chrome only on WSL; a Chrome on the same system reads the path as it is", async () => {
+	const runs: string[][] = [];
+	const run = async (command: string, args: string[]) => {
+		runs.push([command, ...args]);
+		return "\\\\wsl.localhost\\Ubuntu\\srv\\a.docx\n";
+	};
+	assert.equal(await chromePath("/mnt/c/Users/you/a.docx", "wsl", run), "C:\\Users\\you\\a.docx");
+	assert.equal(await chromePath("/srv/a.docx", "wsl", run), "\\\\wsl.localhost\\Ubuntu\\srv\\a.docx");
+	assert.deepEqual(runs, [["wslpath", "-w", "/srv/a.docx"]]);
+	for (const platform of ["linux", "darwin"] as const) assert.equal(await chromePath("/mnt/c/Users/you/a.docx", platform, run), "/mnt/c/Users/you/a.docx");
+	assert.equal(await chromePath("C:\\Users\\you\\a.docx", "win32", run), "C:\\Users\\you\\a.docx");
+	assert.equal(runs.length, 1);
+});
+
+test("prepareUpload decides the conversion when it runs: on native Linux the real path goes to Chrome unchanged", async () => {
+	const path = file("native/report.pdf");
+	const saved = process.env.GENTLE_CHROME_PLATFORM;
+	process.env.GENTLE_CHROME_PLATFORM = "linux";
+	try {
+		assert.deepEqual((await prepareUpload([path])).files, [path]);
+	} finally {
+		if (saved === undefined) delete process.env.GENTLE_CHROME_PLATFORM;
+		else process.env.GENTLE_CHROME_PLATFORM = saved;
+	}
 });
 
 test("a path wslpath cannot convert is refused with the exact message", async () => {

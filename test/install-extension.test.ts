@@ -60,7 +60,18 @@ function setup() {
 /** Runs the script with only the given environment: no inherited PATH entries, no WSL_DISTRO_NAME unless passed. */
 function run(paths: ReturnType<typeof setup>, args: string[], env: Record<string, string> = {}) {
 	const result = spawnSync("bash", [script, ...args], {
-		env: { PATH: `${paths.bin}:/usr/bin:/bin`, HOME: paths.home, GENTLE_CHROME_CONFIG_DIR: paths.config, GENTLE_CHROME_DURABLE_DIR: paths.durable, FAKE_DRIVE: paths.drive, ...env },
+		// Pinned to WSL with a scratch manifest folder: on a native Linux or macOS machine detection would
+		// otherwise pick that platform and write into the real account's Chrome folder.
+		env: {
+			PATH: `${paths.bin}:/usr/bin:/bin`,
+			HOME: paths.home,
+			GENTLE_CHROME_CONFIG_DIR: paths.config,
+			GENTLE_CHROME_DURABLE_DIR: paths.durable,
+			GENTLE_CHROME_PLATFORM: "wsl",
+			GENTLE_CHROME_NATIVE_HOSTS_DIR: join(paths.home, "native-hosts"),
+			FAKE_DRIVE: paths.drive,
+			...env,
+		},
 		encoding: "utf8",
 		// A fake that waits for input must fail the test, not leave it running.
 		timeout: 30_000,
@@ -141,4 +152,36 @@ test("WSL_DISTRO_NAME still decides the distribution, and the script prints no a
 	assert.equal(code, 0, stderr);
 	assertBat(target, "Ubuntu", paths.config);
 	assert.equal(stdout.includes("WSL_DISTRO_NAME is not set"), false);
+});
+
+/** The script's outcome on native Linux: the folder, the launcher and the one manifest it registered. */
+function assertNativeInstall(paths: ReturnType<typeof setup>, target: string, nmh: string, stdout: string): void {
+	assert.ok(stdout.startsWith("Copied Gentle Shell Browser "), stdout);
+	assert.ok(stdout.split("\n").includes(`Registered for Chrome: ${join(nmh, "dev.gentle.shell.json")}`), stdout);
+	assert.ok(existsSync(join(target, "manifest.json")));
+	assert.equal(readFileSync(join(`${target}-host`, "gentle-shell-host.sh"), "utf8"), `#!/bin/sh\nexec '${process.execPath}' '${root}/src/host.ts' --config-dir '${paths.config}'\n`);
+	assert.equal(JSON.parse(readFileSync(join(nmh, "dev.gentle.shell.json"), "utf8")).path, join(`${target}-host`, "gentle-shell-host.sh"));
+	assert.equal(readFileSync(join(paths.durable, "extension-target"), "utf8"), `${target}\n`);
+}
+
+test("without wslpath (native Linux or macOS) the script hands over to the native setup", () => {
+	const paths = setup();
+	rmSync(join(paths.bin, "wslpath"));
+	const target = join(paths.home, "gentle-shell-chrome");
+	const nmh = join(paths.home, "nmh");
+	const { code, stdout, stderr } = run(paths, [target], { GENTLE_CHROME_NATIVE_HOSTS_DIR: nmh, GENTLE_CHROME_PLATFORM: "linux" });
+	assert.equal(code, 0, stderr);
+	assert.equal(stderr, "");
+	assertNativeInstall(paths, target, nmh, stdout);
+	assert.deepEqual(readdirSync(paths.drive), []);
+});
+
+test("GENTLE_CHROME_PLATFORM=linux installs for a Linux Chrome even where wslpath exists", () => {
+	const paths = setup();
+	const target = join(paths.home, "gentle-shell-chrome");
+	const nmh = join(paths.home, "nmh");
+	const { code, stdout, stderr } = run(paths, [target], { GENTLE_CHROME_NATIVE_HOSTS_DIR: nmh, GENTLE_CHROME_PLATFORM: "linux" });
+	assert.equal(code, 0, stderr);
+	assertNativeInstall(paths, target, nmh, stdout);
+	assert.equal(existsSync(join(`${target}-host`, "gentle-shell-host.bat")), false);
 });
