@@ -1,34 +1,100 @@
-# Gentle Chrome
+# Gentle Shell Browser
 
-Let your Gentle Shell sessions drive the Chrome you already have open on Windows, using your profile, but **each one only inside its own tab group**, with a visible cursor and **a permission mode you choose**: ask before every step, remember your decisions per site and kind of step, or never ask.
+Gentle Shell Browser lets the AI agent in your Gentle Shell sessions use the Chrome you already have open, with your profile and your logins, while you stay in control. Each session works **only inside its own tab group**, you watch a pink cursor glide to everything it touches, a **STOP** button is always one click away, and **you choose a permission mode**: ask before every step, remember your decisions per site and kind of step, or never ask. It is a Pi package for Gentle Shell plus a Chrome extension, and they talk only over your own computer.
 
-New here? Read the step-by-step **[user guide](docs/GUIDE.md)**, with pictures of the popup and the on-page cursor.
+[Gentle Shell](https://github.com/Gentleman-Programming/gentle-shell) is a Pi-native terminal workspace for AI coding agents; this package adds a browser to it.
 
-It has two parts:
+New here? Read the step-by-step **[user guide](docs/GUIDE.md)**, with pictures of the popup and the on-page cursor. Curious how it works inside? See **[the architecture notes](docs/ARCHITECTURE.md)**.
 
-- **Pi package** (`src/`): loaded by Gentle Shell. Adds the `browser_*` tools and the `/browser` command. Each session serves an authenticated WebSocket on its own `127.0.0.1` port and registers itself locally.
-- **Chrome extension** (`extension/`): "Gentle Shell Browser", loaded unpacked in Chrome. A small helper (a Chrome native messaging host) tells it the secret token and the live sessions; it connects to every one, enforces each session's tab group and the permission mode, and drives tabs through `chrome.debugger`, so pages receive real input events.
+## Features
 
-## How it works
+- **Browser tools for the agent:** `browser_tabs`, `browser_snapshot`, `browser_act` and `browser_screenshot` work in your real Chrome, with real input events, so pages behave as they do for you.
+- **One tab group per session:** each session reads and acts only on the tabs in its own pink **Gentle · <session>** group. Drag a tab in to lend it, drag it out to take it back.
+- **You see everything:** a ghost cursor glides to each target with a label of the step, your own mouse never moves, and **STOP** (on the page and in the popup) aborts the agent at once.
+- **Three permission modes:** Always ask, Remember my decisions (saved allow or deny per site and kind of step) and Never ask. Only you change them; no agent tool can.
+- **Risky page and action detection:** payments, transfers, deletions, passwords and security pages are recognized automatically and named in the prompt.
+- **File uploads** into a page without Chrome's file dialog, with keys, passwords and credentials always refused.
+- **WhatsApp watch:** a new message from a chat on your allow list wakes the session, and the agent answers in that chat on its own.
+- **Automatic extension updates:** pull new code and the extension in Chrome updates and reloads itself.
+- **Several sessions at once:** up to 100 Gentle Shell sessions, each with its own group, port and approval prompt.
+- **Everything local:** each session listens on `127.0.0.1` only, and the extension and the session prove to each other that they know a secret token (an HMAC handshake) without ever sending it.
 
+## Supported platforms
+
+| Platform | Gentle Shell runs on | Chrome runs on | Install the extension and helper with |
+|----------|----------------------|----------------|---------------------------------------|
+| Linux | Linux | Linux | `npm run install-extension` |
+| macOS | macOS | macOS | `npm run install-extension` |
+| Windows | Windows | Windows | `npm run install-extension` |
+| Windows + WSL2 | WSL2 | Windows | `scripts/install-extension.sh` |
+
+## Requirements
+
+- **Google Chrome 120 or newer**. On Linux and macOS, Chromium and other Chromium browsers work too (see `GENTLE_CHROME_NATIVE_HOSTS_DIR`); on Windows and WSL the helper is registered for Google Chrome only.
+- **Node.js 22.18 or newer**, where Gentle Shell runs.
+- **[Gentle Shell](https://github.com/Gentleman-Programming/gentle-shell)**.
+- **git and npm**, to get the code and install its dependencies.
+
+## Install
+
+The [user guide](docs/GUIDE.md#3-install) walks through the same steps with checks and pictures.
+
+### 1. Pi package
+
+Get the code, install the dependencies once, then add the package to Gentle Shell's own Pi:
+
+```sh
+git clone https://github.com/AndySabina/gentle-shell-browser.git
+cd gentle-shell-browser
+npm install
+~/.local/share/gentle-shell/install/bin/pi install "$PWD"
 ```
-WSL: Gentle Shell (Pi package)                      Windows: Chrome (Gentle Shell Browser)
-──────────────────────────────                      ──────────────────────────────────────
-agent ─ browser_* tool ─► ws://127.0.0.1:487xx ◄─── extension (Origin chrome-extension://…
-   (one port per session)                            + mutual proof of the shared token)
-                                                       │ 1. tab must be in this session's group
-                                                       │ 2. mode decides: allow / ask / refuse
-terminal prompt ◄── "approve" request ◄────────────────┘ 3. ghost cursor glides, then real input (CDP)
-"Deny" / "Allow once" / "Always …" ────────────────►   STOP (page or popup) ─► aborts the agent run
-```
 
-The decision lives in the extension; the terminal only shows the question. A tool cannot skip a check, change the mode or save a decision. The extension finds the sessions and the token through the helper `dev.gentle.shell`, so there is nothing to pair.
+Keep this folder: the helper Chrome starts runs from it.
 
-## Quick path
+That is the private layout `gentle-ai shell install` creates (by default under `~/.local/share/gentle-shell/install`, called `<install>` below): `<install>/bin/pi install` adds the folder to the private agent's settings. `gentle-shell install "$PWD"` only works in the older layout: in this one `gentle-shell install` is the Gentle Shell installer itself and rejects a package path.
 
-1. Install the Pi package into Gentle Shell and restart it.
-2. Run `scripts/install-extension.sh` once and load the extension unpacked in Chrome.
-3. Ask the agent to open a page. It appears in a pink **Gentle · <session>** tab group.
+| Layout | Add the package |
+|--------|-----------------|
+| Private (`<install>/bin/pi`) | `<install>/bin/pi install "$PWD"` |
+| Older layout (`~/.gentle-shell`) | `gentle-shell install "$PWD"` (older layout only), or add the folder to the `packages` list in `~/.gentle-shell/agent/settings.json` (older layout only; relative paths resolve from that file's folder), for example `{ "packages": ["/absolute/path/to/gentle-shell-browser"] }` |
+
+Restart Gentle Shell. The bridge starts with the session: `/browser status` prints `Gentle Chrome: session "<name>" (<id>) listening on 127.0.0.1:<port>, Chrome not connected; the browser tools appear when it connects.` Each session takes the first free port from 48733 to 48832. (`Gentle Chrome:` is the prefix of every status line the package prints.)
+
+### 2. Extension and helper
+
+Run this once, from the cloned folder. It copies the extension to a folder Chrome can load and installs a small helper (a Chrome native messaging host) next to it, in `<folder>-host`. The helper tells the extension the secret token and the running sessions.
+
+| Platform | Command | Default extension folder | Helper registered at |
+|----------|---------|--------------------------|----------------------|
+| Linux | `npm run install-extension` (or `scripts/install-extension.sh`) | `~/.local/share/gentle-shell-chrome` | `~/.config/google-chrome/NativeMessagingHosts/dev.gentle.shell.json`, plus `~/.config/chromium/NativeMessagingHosts/` when that Chromium folder exists |
+| macOS | `npm run install-extension` (or `scripts/install-extension.sh`) | `~/Library/Application Support/gentle-shell-chrome` | `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/dev.gentle.shell.json`, plus Chromium's when present |
+| Windows | `npm run install-extension` | `%USERPROFILE%\gentle-shell-chrome` | Registry key `HKCU\Software\Google\Chrome\NativeMessagingHosts\dev.gentle.shell` |
+| WSL2 | `scripts/install-extension.sh` | `%USERPROFILE%\gentle-shell-chrome` | Registry key `HKCU\Software\Google\Chrome\NativeMessagingHosts\dev.gentle.shell` |
+
+To use another folder, pass it as the only argument: `npm run install-extension -- <folder>`, or `scripts/install-extension.sh 'D:\tools\gentle-chrome'` on WSL (a Windows or `/mnt/…` path). On WSL, `npm run install-extension` without a folder refuses and points to `scripts/install-extension.sh`.
+
+- Everything is installed for your user only; no admin rights are needed. Only this extension may start the helper: its id is fixed by the `key` in the manifest. Registration paths come from your account's real home folder, not a redirected `$HOME`.
+- For Brave, Edge, Vivaldi or another Chromium browser on Linux or macOS, set `GENTLE_CHROME_NATIVE_HOSTS_DIR` to that browser's `NativeMessagingHosts` folder; the helper manifest goes there instead of the default folders.
+- The install refuses a non-empty folder that is not a previous copy (no `manifest.json` named "Gentle Shell Browser"), and never deletes anything. It writes only the extension folder, the helper folder next to it (`<folder>-host`), its records in the config folder, and the helper's registration (the manifest files or the registry key above).
+- The helper starts the Node that ran the install. When a Gentle Shell reinstall or Node upgrade removes that Node, Chrome cannot start the helper. The session says so when it starts and in `/browser status`; `/browser update` rewrites the helper with the session's Node.
+- On WSL, the script also picks the WSL distribution the helper starts; see [the architecture notes](docs/ARCHITECTURE.md#the-native-messaging-helper) and [Troubleshooting](#troubleshooting).
+
+**Run it with your session's config folder.** The helper reads the token and the session list from one config folder, and Chrome starts it with your normal environment, not Gentle Shell's. So the install writes the folder it resolved into the helper. A Gentle Shell session with a private layout uses its own folder (for example `<install>/config/gentle-chrome`); `/browser status` prints it on its second line, with the command to run when the helper reads another one:
+
+| Platform | Command |
+|----------|---------|
+| WSL2 | `GENTLE_CHROME_CONFIG_DIR='<config folder from /browser status>' scripts/install-extension.sh` |
+| Linux, macOS | `GENTLE_CHROME_CONFIG_DIR='<config folder from /browser status>' npm run install-extension` |
+| Windows (PowerShell) | `$env:GENTLE_CHROME_CONFIG_DIR='<config folder from /browser status>'; npm run install-extension` |
+
+Without the variable, the install uses `$XDG_CONFIG_HOME/gentle-chrome` or `~/.config/gentle-chrome` of the terminal you run it in. There is one helper per user, so the last install decides which folder it reads; `/browser update` and automatic updates rebind it to the session that runs them.
+
+### 3. Load the extension in Chrome
+
+Once, in Chrome: `chrome://extensions` → turn on **Developer mode** → **Load unpacked** → choose the folder the install printed. Then ask the agent to open a page: it appears in a pink **Gentle · <session>** tab group. There is nothing to pair; sessions connect by themselves within 30 seconds, or at once when you open the popup.
+
+Updates are automatic from then on: when the extension connects with another build than your checkout's, Gentle Shell copies the new files into its folder and asks it to reload itself. `/browser update` does the same on demand. An extension loaded before self-update existed asks you once to press the reload icon on the Gentle Shell Browser card in `chrome://extensions`.
 
 ## A quick look
 
@@ -40,86 +106,11 @@ The extension popup shows how many sessions are connected, the On/Off switch, th
 
 <img src="docs/images/popup-connected.png" alt="Extension popup: Connected (2), the connect switch on, Always ask selected, STOP button" width="320">
 
-| Mode | What asks you |
-|---|---|
-| **Always ask** | Every step. |
-| **Remember my decisions** | Asks, and you can save allow or deny per site and kind of step (for example, allow clicks on a site but keep asking before payments there). |
-| **Never ask** | Nothing. Only the session's tab group and STOP limit it. |
-
-**[Continue in the full guide →](docs/GUIDE.md)** for installing step by step, [using it](docs/GUIDE.md#4-using-it), [permission modes and saved decisions](docs/GUIDE.md#5-permission-modes), troubleshooting and uninstalling.
-
-## Install
-
-The [user guide](docs/GUIDE.md#3-install) walks through the same steps with checks and pictures.
-
-### 1. Pi package
-
-Install the dependencies once, then add the package to Gentle Shell's own Pi:
-
-```sh
-git clone https://github.com/AndySabina/gentle-shell-browser.git
-cd gentle-shell-browser
-npm install
-~/.local/share/gentle-shell/install/bin/pi install "$PWD"
-```
-
-That is the private layout `gentle-ai shell install` creates (by default under `~/.local/share/gentle-shell/install`, called `<install>` below): `<install>/bin/pi install` adds the folder to the private agent's settings. `gentle-shell install "$PWD"` only works in the older layout: in this one `gentle-shell install` is the Gentle Shell installer itself and rejects a package path.
-
-| Layout | Add the package |
-|--------|-----------------|
-| Private (`<install>/bin/pi`) | `<install>/bin/pi install "$PWD"` |
-| Older layout (`~/.gentle-shell`) | `gentle-shell install "$PWD"` (older layout only), or add the folder to the `packages` list in `~/.gentle-shell/agent/settings.json` (older layout only; relative paths resolve from that file's folder), for example `{ "packages": ["/absolute/path/to/gentle-shell-browser"] }` |
-
-Restart Gentle Shell. The bridge starts with the session: `/browser status` prints `session "<name>" (<id>) listening on 127.0.0.1:<port>, Chrome not connected`. Each session takes the first free port from 48733 to 48832.
-
-### 2. Install once: extension and helper
-
-Chrome cannot reliably load an unpacked extension from a `\\wsl.localhost\…` path, so the script copies it to a Windows folder and installs the helper next to it:
-
-```sh
-scripts/install-extension.sh                      # default: %USERPROFILE%\gentle-shell-chrome
-scripts/install-extension.sh 'D:\tools\gentle-chrome'  # or any folder (Windows or /mnt/… path)
-```
-
-- The extension goes to the target (by default `%USERPROFILE%\gentle-shell-chrome`).
-- The helper goes to `<target>-host` and is registered for your Windows user under `HKCU\Software\Google\Chrome\NativeMessagingHosts\dev.gentle.shell` (no admin needed). Only this extension may start it: its id is fixed by the `key` in the manifest.
-- The helper starts the Node that ran the install, in the WSL distribution `WSL_DISTRO_NAME` names. Inside a Gentle Shell session, where `PATH` may lack the Windows folders and `WSL_DISTRO_NAME` is unset, the script finds `cmd.exe` or `powershell.exe` in `C:\Windows\System32`, takes the distribution from `wslpath -w /` (the one running it) and prints it. If it cannot tell and the target is on a Windows drive, it stops: set `WSL_DISTRO_NAME` to the name `wsl.exe -l -q` lists and run it again.
-- When a Gentle Shell reinstall or Node upgrade removes that Node, Chrome cannot start the helper. The session says so when it starts and in `/browser status`; `/browser update` rewrites the helper with the session's Node.
-
-Then, once, in Chrome: `chrome://extensions` → turn on **Developer mode** → **Load unpacked** → choose the folder the script printed (by default `%USERPROFILE%\gentle-shell-chrome`).
-
-**Run it with your session's config folder.** The helper reads the token and the session list from one config folder, and Chrome starts it with your normal WSL environment, not Gentle Shell's. So the script writes the folder it resolved into the helper (`--config-dir` in `gentle-shell-host.bat`). A Gentle Shell session with a private layout uses its own folder (for example `<install>/config/gentle-chrome`); `/browser status` prints it on its second line. Run the script with that folder, from any terminal:
-
-```sh
-GENTLE_CHROME_CONFIG_DIR='<config folder from /browser status>' scripts/install-extension.sh
-```
-
-Without the variable, the script uses `$XDG_CONFIG_HOME/gentle-chrome` or `~/.config/gentle-chrome` of the terminal you run it in. There is one helper per Windows user, so the last install decides which folder it reads; `/browser update` and automatic updates rebind it to the session that runs them.
-
-The script refuses a non-empty folder that is not a previous copy (no `manifest.json` named "Gentle Shell Browser"), never deletes anything, and only writes inside the target.
-
-**Updates are automatic.** The script stamps the copy with `build.json` and `build.js` (a hash of the extension's files) and records the folder in `~/.config/gentle-chrome/extension-target`. It also records it in your real `~/.config/gentle-chrome` (from the account's home, not `$HOME`), so a Gentle Shell update that replaces its own config folder does not lose it. Whenever the extension connects with another build than your checkout's, Gentle Shell copies the new files into that folder and asks the extension to reload itself as soon as no action is running (it retries every 30 seconds, up to 10 times). `/browser update` does the same on demand. The extension reports the build from `build.js`, which is part of its code: Chrome keeps running the code it cached until the extension reloads, even across browser restarts, so a stale copy reports its old build and gets reloaded.
-
-An extension loaded before self-update existed cannot reload itself: Gentle Shell copies the files and asks you to press the reload icon on the Gentle Shell Browser card in `chrome://extensions` once. After that it updates itself.
-
-## Sessions connect automatically
-
-There is no pairing code. Every 30 seconds, when Chrome starts and whenever you open the popup, the extension asks the helper for the token and the live Gentle Shell sessions, then:
-
-- connects to each new session (the toolbar badge shows **ON**, or the number of connected sessions);
-- closes the connection of a session that ended;
-- redials a session whose port changed;
-- leaves the others alone.
-
-A session entry the helper lists that is not valid is skipped; the other sessions still connect. Gentle Shell records each session's name trimmed, without control characters, at most 60 characters, and "session" when empty.
-
-The popup shows how many sessions are connected in its status pill and has an **On/Off** switch ("Connect to Gentle Shell sessions"): Off closes every connection and stops connecting until you turn it On again. Check a single session from Gentle Shell with `/browser status`.
-
-The token itself never travels over the socket. On every connection both sides exchange random nonces and prove they know the token with an HMAC that also names the session: Gentle Shell proves it first, then the extension. If whatever listens on a session's port cannot prove it (another program took the port), the extension closes that connection, stops retrying it and lists it as `untrusted`; turn the switch Off and On to try again.
+**[Continue in the full guide →](docs/GUIDE.md)** for [using it](docs/GUIDE.md#4-using-it), [permission modes and saved decisions](docs/GUIDE.md#5-permission-modes), troubleshooting and uninstalling.
 
 ## Use
 
-Just ask, for example: "open github.com and find the latest issue in my repo". The agent opens tabs inside the group and you watch a rose ghost cursor glide to each target with a label of the action. Your real mouse never moves.
+Just ask, for example: "open github.com and find the latest issue in my repo". The agent opens tabs inside its group and you watch a rose ghost cursor glide to each target with a label of the action.
 
 ### Commands
 
@@ -150,7 +141,7 @@ The agent sees these tools only while Chrome is connected to its session; until 
 |------|------|
 | `browser_tabs` | Lists the tabs in the group (id, title, URL). |
 | `browser_snapshot` | Reads a tab: URL, title, text and interactive elements as `[ref] role "name"` with only the flags that matter (`type=`, `value=`, `checked`, `disabled`). By default only the viewport: up to 80 elements on screen, the visible text (up to 1500 characters), and a count of the elements outside it. `full: true` reads the whole page (up to 300 elements, offscreen ones included, and 6000 characters of text). `details: true` adds each link's address (shortened: path and query on the same site, host and path elsewhere, 80 characters at most) and each element's center. The text leaves out what the listed elements already name. |
-| `browser_act` | One step in a group tab, chosen by `action`: `click` (ref or x/y, any button, single or double click), `type` (into a field; can clear it first and press Enter after; fails, without pressing Enter, when no field has the focus or the field's value did not change; otherwise the result says whether the value changed, or why it could not be checked), `key` (`Enter`, `Control+a`, `Shift+Tab`…), `scroll` (mouse wheel at an element, a point or the viewport center), `navigate` (load a URL), `back`, `forward`, `reload`, `open` (an http(s) URL in a new tab inside the group, creating the group if needed; needs no `tabId`), and `upload` (1 to 10 local files into a file input, or through the file chooser an element such as WhatsApp's Attach → Document opens; see [Uploading files](#uploading-files)). A step missing what its action needs is refused before anything reaches Chrome. The result says what happened, and the tab's title and URL only when the URL changed (always after a page load). |
+| `browser_act` | One step in a group tab, chosen by `action`: `click` (ref or x/y, any button, single or double click), `type` (into a field; can clear it first and press Enter after; fails, without pressing Enter, when no field has the focus or the field's value did not change; otherwise the result says whether the value changed, or why it could not be checked), `key` (`Enter`, `Control+a`, `Shift+Tab`…), `scroll` (mouse wheel at an element, a point or the viewport center), `navigate` (load a URL), `back`, `forward`, `reload`, `open` (an http(s) URL in a new tab inside the group, creating the group if needed; needs no `tabId`), and `upload` (1 to 10 local files into a file input, or through the file chooser an element such as WhatsApp's Attach → Document opens; see [Uploading files](docs/ARCHITECTURE.md#uploading-files)). A step missing what its action needs is refused before anything reaches Chrome. The result says what happened, and the tab's title and URL only when the URL changed (always after a page load). |
 | `browser_screenshot` | Captures what a tab shows as a JPEG, at most 1024 pixels wide. Fails after 5 s on a background tab, which Chrome does not paint. |
 
 ### Environment variables
@@ -159,185 +150,84 @@ The agent sees these tools only while Chrome is connected to its session; until 
 |----------|---------|--------|
 | `GENTLE_CHROME_PORT` | first free of 48733–48832 | Pins this session's port. The extension only connects to ports in 48733–48832. |
 | `GENTLE_CHROME_CONFIG_DIR` | — | Folder holding the token and the session records. |
-| `GENTLE_CHROME_DURABLE_DIR` | your real `~/.config/gentle-chrome` | Second folder where `scripts/install-extension.sh` records the extension folder, outside Gentle Shell's install. |
-| `XDG_CONFIG_HOME` | `~/.config` | Used when the variable above is unset: the token lives in `$XDG_CONFIG_HOME/gentle-chrome/token` (mode 0600), each session's record in `sessions/<id>.json`. |
-
-## WhatsApp watch
-
-A doorbell for WhatsApp Web: while it is on, a new message from a chat on your allow list starts the session whose tab group holds the WhatsApp Web tab, and the agent answers in that chat on its own. Nothing waits on the model in the meantime: the extension notices the message, so no tokens are spent until one arrives.
-
-- **Switch:** `/browser watch on|off`, or the popup's **Answer new messages · <session>** switch. Turning it on asks you to confirm. It is kept by the extension, per session, so either side shows the other's change; the status bar shows `WhatsApp: watching`. It starts off in every new session and after Chrome or the extension restarts. Switching it on opens WhatsApp Web in the session's group when the group has none; messages already unread there do not ring.
-- **Diagnosis:** `/browser watch` shows when the tab last read its chat list and the last ring, to help diagnose a watch that does not ring.
-- **Allow list:** `/browser watch allow <chat name>`, `/browser watch remove <chat name>`, or the popup. Names match as WhatsApp shows them, ignoring case and extra spaces. Other chats never ring.
-- **Same name, no ring:** chats are matched by the name WhatsApp shows; when two rows share an allowed name, neither rings. The open chat shows no unread count, so its messages do not ring.
-- **Once per message:** a ring needs the unread count to rise; a typing or recording status in the preview never rings. Unread messages already there when it goes on do not ring; a chat rings again after it was read and a new message arrives. A message that already rang never rings again, even when WhatsApp shows it unread again after the agent replied; each chat remembers its last 20 such messages. More unread messages in a chat that already had some always ring; only a chat that was read and then shows one unread message with exactly the same text as a remembered one does not ring. While a ring for a chat waits for the agent, more messages from that chat add no ring: the agent reads them all when it opens the chat. Messages that arrive while the agent is busy ring after it finishes, and only if the chat still has unread messages. If it opens a chat with nothing after its last reply, it does not reply. The agent is asked to close the chat after replying, so its next message can ring.
-- **How it wakes:** the extension calls the session's `whatsappMessage` over the authenticated connection; the Pi package sends a custom message with `triggerTurn` (a follow-up when the session is busy). The message quotes the chat's name and preview as untrusted data.
-- **Reader:** `extension/whatsapp.js` is injected (`chrome.scripting`, host permission for `https://web.whatsapp.com/*` only) while the watch is on and after the tab reloads. It only reads the chat list and never changes the page; switching the watch off removes it. WhatsApp Web's markup is not documented: if WhatsApp changes it, the reader may stop noticing messages until it is updated.
-- **Replies** are ordinary `browser_act` steps and follow the permission mode; for unattended replies use Remember my decisions with "Always allow" on `web.whatsapp.com`, or Never ask.
-- **Files** the agent attaches in the chat open in that tab go ahead without asking only when that chat is on the allow list and no other chat row has its name; any other upload always asks. See [Uploading files](#uploading-files).
-
-## The tab groups
-
-- **One group per session.** Each Gentle Shell session gets its own pink group titled **Gentle · <session name>**. When two running sessions share a name, the later ones are **Gentle · <name> · 2**, **· 3**… A name that ends in "(ended)" ends in "(ended session)" in the title, so no live group looks like an ended one.
-- A session can only read or act on tabs in its own group. Any other tab id, including a tab in another session's group, gets "Tab N is not in the Gentle Shell group".
-- The agent never switches tabs for you: it opens and works in its tabs in the background, so you keep browsing in yours. Switch to a group tab to watch the cursor.
-- **Grant** a tab to a session by dragging it into that session's group. **Revoke** by dragging it out: the cursor and the debugger leave that tab at once.
-- `browser_act` with `open` creates the session's group in your last focused window.
-- A group you title exactly like a session's group yourself (for example "Gentle · docs") counts as granted to that session: it is adopted when its stored group is gone, unless another session owns it. A group whose title ends in " (ended)" is never adopted.
-- **Ended sessions.** When a session ends, its group stays with its tabs and is renamed **Gentle · <name> (ended)**. No session ever uses it again; close it or reuse the tabs yourself. The extension remembers the live sessions, so a session that ended while Chrome or the extension was not running gets its group renamed at the next discovery.
-- Actions run one at a time across all sessions.
-- **Leaving the group stops an action.** Right before every input event the extension checks the tab again; if you dragged it out meanwhile (even during an approval prompt), the action fails with "Tab N left the Gentle Shell group; the action was cancelled." and nothing is sent. The debugger never attaches, or re-attaches, to a tab outside the group.
-- **Tabs an agent action opens** (a `target=_blank` link, `window.open`, a middle click) are taken out of the group at once, even if Chrome put them there. The permission mode below then decides, as for opening a page: allowed → it joins the group; denied, no answer or STOP → it is closed.
-- **Tabs a group tab opens later**, with no agent action running (for example a page's delayed `window.open`, or your own middle click in a group tab), are quietly taken out of the group if Chrome puts them there when they open or within 2 seconds. Nothing is asked and the tab stays open. Drag it back into the group to grant it; that is not undone.
-- Tabs opened from tabs outside the group are never touched.
+| `GENTLE_CHROME_DURABLE_DIR` | your real `~/.config/gentle-chrome` | Second folder where the install records the extension folder, outside Gentle Shell's install. |
+| `XDG_CONFIG_HOME` | `~/.config` | Used when `GENTLE_CHROME_CONFIG_DIR` is unset: the token lives in `$XDG_CONFIG_HOME/gentle-chrome/token` (mode 0600), each session's record in `sessions/<id>.json`. |
+| `GENTLE_CHROME_PLATFORM` | detected | `wsl`, `linux`, `darwin` or `win32`: overrides platform detection for the install, for example to use a Linux Chrome inside WSL through WSLg. |
+| `GENTLE_CHROME_NATIVE_HOSTS_DIR` | Chrome's (and Chromium's) folders | On Linux and macOS, the one folder the helper manifest goes to, for Brave, Edge, Vivaldi or another Chromium browser. Replaces the default list. |
 
 ## Permission modes
 
-Choose in the popup (applies at once) or with `/browser level`. Default: **Always ask**. No agent tool can read or change the mode or the saved decisions. An older install's levels carry over: Supervised becomes Always ask, Autonomous becomes Remember my decisions.
+Choose in the popup (applies at once) or with `/browser level`. Default: **Always ask**. No agent tool can read or change the mode or the saved decisions.
 
-| Mode | What it does |
-|------|--------------|
-| **Always ask** (`always`) | Asks before every acting step: opening or loading a page (`open`, `navigate`, `back`, `forward` and `reload` steps, a click that loads a page, a tab an action opens), and every click, typing, key press and scroll. |
-| **Remember my decisions** (`remember`) | Asks like Always ask, but the prompt also offers **Always allow … on \<site\>** and **Always deny … on \<site\>**. A saved decision answers that site and kind of step from then on, without asking. |
-| **Never ask** (`never`) | Asks nothing: the agent does whatever you tell it. Only the session's tab group and STOP limit it. The popup and `/browser level never` ask you to confirm first. File uploads are the exception: see [Uploading files](#uploading-files). |
+| Mode | What asks you |
+|------|---------------|
+| **Always ask** (`always`) | Every acting step: opening or loading a page, every click, typing, key press and scroll. |
+| **Remember my decisions** (`remember`) | Asks, and you can save allow or deny per site and kind of step (for example, allow clicks on a site but keep asking before payments there). |
+| **Never ask** (`never`) | Nothing. Only the session's tab group and STOP limit it. File uploads still follow their own rule. |
 
-Reading (tabs, snapshot, screenshot) never asks. The tab group limit and STOP hold in every mode.
+Reading (tabs, snapshot, screenshot) never asks. Each step has a **kind** the extension decides, never the agent: payments and transfers, deleting/passwords/security changes, opening pages, clicks, typing, key presses or scrolling. The prompt appears in the session's terminal with **Deny** first and as the default; no answer in 5 minutes, STOP or a disconnect count as Deny. The agent can only raise risk (`risky: true`), never skip a question. The full rules, including risky pages and uploads, are in [the guide](docs/GUIDE.md#5-permission-modes) and [the architecture notes](docs/ARCHITECTURE.md#policy-reference).
 
-### Kinds of step
+## WhatsApp watch
 
-Every acting step has a **site**, the host of the page it acts on (for opening a page, of the destination) in lower case without `www.`, and a **kind**, decided by the extension, never by the agent:
+A doorbell for WhatsApp Web: while it is on, a new message from a chat on your allow list starts the session whose tab group holds the WhatsApp Web tab, and the agent answers in that chat on its own. The extension notices the message, so no tokens are spent until one arrives.
 
-| Kind | In the prompt | When |
-|------|---------------|------|
-| `money` | payments and transfers | A control named pay, buy, purchase, order, place order, checkout, transfer or donate (also pagar, comprar, transferir, donar); typing into a card or bank field; submitting a form with one; any step on a page with card or bank fields, an embedded payment form or a pay/transfer submit button; a risky verb on a billing or payment methods page. |
-| `irreversible` | deleting, passwords and security changes | A control named delete, remove (also eliminar, borrar, quitar); typing into a password or one-time code field; submitting a form with a password field; any step on a page with a password field or a delete submit button; a risky verb on a page about passwords, two-factor, account deletion or security. |
-| `navigate` | opening pages | Opening or loading a page, and a tab an action opens. |
-| `click`, `type`, `key`, `scroll` | clicks, typing, key presses, scrolling | Any other step of that kind. Scrolling is always `scroll`: it cannot pay or delete. |
+- Switch it with `/browser watch on|off` or the popup; turning it on asks you to confirm. It starts off in every new session and after Chrome or the extension restarts.
+- Only chats you add with `/browser watch allow <chat name>` (or in the popup) ring; two chats sharing an allowed name never ring.
+- Each message rings once; messages already unread when it goes on do not ring.
+- Replies are ordinary `browser_act` steps and follow the permission mode. Chat text reaches the agent as untrusted data.
+- With the watch off, nothing reads your chats.
 
-When a step matches both, `money` wins over `irreversible`. The detection is listed under [Risky actions](#risky-actions) and [Risky pages](#risky-pages); what it found is shown on the prompt's `Why:` line.
+Details: [the guide](docs/GUIDE.md#answer-whatsapp-messages-on-its-own) and [the architecture notes](docs/ARCHITECTURE.md#whatsapp-watch).
 
-### Saved decisions (Remember my decisions)
+## Privacy and security
 
-- A decision is saved per site and kind. One kind never covers another: **Always allow clicks on mercadopago.com** still asks before a payment there, and nothing saved for `mercadopago.com` covers `mercadopago.com.ar`.
-- A saved **allow** goes ahead without asking. A saved **deny** refuses without asking: "The user did not approve: … (saved rule: deny money on mercadopago.com)".
-- The agent can still raise: `risky: true` asks even over a saved allow. A page whose content could not be read is never covered by a saved allow either.
-- A page without a host (such as `about:blank`) has no site: in this mode it always asks and offers no saving.
-- Manage them in the popup (a **Saved decisions** list, shown in Remember mode, with **Remove** on each and **Clear all**) or with `/browser rules`. Only you save decisions: the extension accepts one only as the answer to a prompt that offered it.
+- **Everything stays on your computer.** Each session listens on `127.0.0.1` only and accepts only this extension. The token lives in `~/.config/gentle-chrome/token` (mode 0600); on every connection both sides prove they know it with an HMAC challenge, so it never travels over the socket.
+- **Stored locally:** the token and the list of running sessions in the config folder; your mode, saved decisions and WhatsApp allow list in the extension's own Chrome storage.
+- **Nothing is sent to third parties by this package.** It has no telemetry and talks to no server.
+- **Your model provider sees what the tools return.** The page text, snapshots and screenshots the agent reads go to the model your Gentle Shell session uses, like any other tool output. Keep sensitive tabs out of the session's group.
+- Sensitive files (keys, credentials, `.env` files, browser password stores…) are never uploaded, in any mode.
 
-### The prompt
-
-The prompt appears in the Gentle Shell terminal with **Deny** (listed first, the default) and **Allow once**; in Remember my decisions also **Always allow \<kind\> on \<site\>** and **Always deny \<kind\> on \<site\>**. Anything else counts as no: no answer in 5 minutes, no terminal UI, Chrome disconnected, STOP, or an error. A denied step fails with "The user did not approve: …" and the agent is told not to retry it. Text from the page is cleaned before it reaches the terminal: control characters, bidi overrides and line separators are removed.
-
-An approval covers that exact address and the server redirects of that request. Any other page load in the same action (a second navigation the page starts on its own, a script redirect) is decided again by the mode. A risky page is covered as a redirect only by that exact address or by the mode itself (Never ask, or a saved allow for its site).
-
-### Risky actions
-
-These decide a step's kind (`money`, `irreversible` or its plain kind) and its `Why:` line; whether it asks is up to the mode.
-
-- Typing into a password, payment card, one-time code or IBAN/CVV field.
-- Pressing Enter in a message box (textarea or rich editor).
-- Submitting a form: Enter or a `type` step with submit inside a form, or clicking (or pressing Enter/Space on) a submit button. Search forms are the exception: a `role=search` landmark, a search field, an action address containing "search", or a single text field named `q`, `query`, `search` or `s`. A form with a password or payment field is always risky.
-- Clicking a control, or pressing Enter or Space on a focused button or link, whose name says pay, buy, order, checkout, send, delete, remove, publish, post, transfer, confirm, unsubscribe, sign (not sign in/up/out/on), donate, cancel subscription, or the Spanish equivalents (pagar, comprar, enviar, eliminar, borrar, quitar, publicar, transferir, confirmar, firmar, donar).
-- Input on a target the extension cannot inspect: no element there, an iframe, frame, embed or object, or an unnamed shadow-DOM component. (Tab, Shift+Tab and Escape are exempt.)
-
-Right before pressing, the extension checks that the element under the cursor is still the target. If the page moved, it looks the element up once more and glides there; if it is still covered, the action fails with "The page moved under the cursor; take a new browser_snapshot." and nothing is pressed.
-
-### Risky pages
-
-Risky pages are detected automatically; you do not have to list them. As with risky actions, this decides a step's kind and `Why:` line, not whether it asks. Right before every click, typing, key press or scroll, the extension reads the page (main frame, visible elements only) and treats it as risky when it has:
-
-- a password field;
-- a payment card, one-time code or bank account field: autocomplete `cc-*` or `one-time-code`, or a name, id or label about card number, CVV/CVC, expiry, IBAN, routing or account number (also `tarjeta`, `vencimiento`, `cuenta`, `CLABE`, `CBU`);
-- a form submit control whose name is one of the risky verbs above (pay, send, transfer, delete…);
-- an embedded payment form from Stripe, PayPal, Mercado Pago, Adyen, Braintree, Checkout.com or Square;
-- a title or heading about account security or billing: change password, two-factor, delete account, billing, payment methods, security (and `cambiar contraseña`, `verificación en dos pasos`, `eliminar cuenta`, `facturación`, `métodos de pago`, `seguridad`);
-- content that cannot be read.
-
-A page also counts as risky by its address when:
-
-- its host starts with `admin`, or contains `bank`, `banking`, `banco`, `wallet` or `billing`;
-- its path has a segment `checkout`, `billing`, `payment(s)`, `pay`, `admin`, `settings`, `security`, `password`, `account(s)` or `wallet`;
-- its address cannot be read;
-- it is on the built-in list of payment, mail, account and cloud console domains (not editable).
-
-Before a navigation the destination's content is unknown, so only its address is named in the prompt. Right after a page loads, the extension reads it and tells the agent when it looks sensitive (`browser_snapshot` shows a `Risk:` line too); nothing pauses then, but the next action on that page is `money` or `irreversible` when its content says so.
-
-**The agent can only raise risk.** `browser_act` takes an optional `risky` flag for every action but `scroll` and `upload`, which ignore it (uploads have [their own rule](#uploading-files)). `risky: true` makes that step ask in Always ask and Remember my decisions, even over a saved allow ("the agent marked this step as sensitive"); it has no effect in Never ask. `false`, or any other value, changes nothing, so the agent can never skip an approval the mode requires.
-
-**The built-in list is not editable.** A page on it is reported to the agent as sensitive and named on the prompt's `Why:` line; it does not add a prompt by itself. An entry is a domain, which covers its subdomains, optionally with a path prefix such as `github.com/settings`. It covers payment providers, banks, webmail, account pages and cloud consoles (PayPal, Stripe, Mercado Pago, Google/Microsoft/Apple accounts, Gmail, Outlook, AWS, Azure, GCP…).
-
-### Uploading files
-
-`browser_act` with `upload` takes a `ref` and `files`, 1 to 10 absolute paths. Chrome's file dialog never shows: when `ref` is a file input, the files are set on it directly (`DOM.setFileInputFiles`); otherwise the extension intercepts the file chooser (`Page.setInterceptFileChooserDialog`), clicks `ref`, waits up to 5 seconds for the chooser and sets the files on the input that opened it. The interception ends right after, on errors and STOP too. A chooser that takes one file refuses several, and nothing is attached when no chooser opens.
-
-- **Checked in the session first.** Each path must be absolute and name a readable regular file; symlinks are followed. Then it is converted to a path Chrome on Windows can read (`/mnt/c/…` becomes `C:\…`, anything else goes through `wslpath -w`). A refused file fails the whole step before anything reaches Chrome.
-- **Sensitive files are never uploaded**, in any mode or chat, by the path given or the file it resolves to: anything inside `.ssh`, `.gnupg`, `.aws`, `.azure`, `.kube`, `.docker`, `secrets`, `.password-store` or `keyrings`; files named `.env` or `.env.*`, `.netrc`, `.npmrc`, `.pypirc`, `.git-credentials`, `credentials`, `credentials.json`, `id_rsa`, `id_ed25519`, `id_ecdsa`, `id_dsa` (and their `.pub`), `known_hosts`, `authorized_keys`, `.pgpass`, `.my.cnf`, `.bash_history`, `.zsh_history`, `.python_history`, `.psql_history` or `wallet.dat`; anything inside `.config/gcloud` or `.config/gh` (such as `hosts.yml`); `Login Data`, `Cookies` and `Web Data` inside a Chrome, Chromium, Edge or Brave profile (`User Data`, `.config/google-chrome`, `.config/chromium`…); and `.pem`, `.key`, `.p12`, `.pfx`, `.keystore`, `.jks`, `.kdbx`, `.kdb`, `.ppk`, `.asc`, `.gpg` and `.ovpn` files. Case, and trailing spaces or dots that Windows strips (`.env.`), do not count. The agent is told not to retry. The check is by path, so a hard link or copy of a sensitive file under another name is not detected; the approval prompt is the remaining protection there.
-- **Approval: uploads have their own rule, not the permission mode.** On `https://web.whatsapp.com`, when the chat open in that tab is on the [WhatsApp watch](#whatsapp-watch) allow list and exactly one row of the chat list has its name, the upload goes ahead without asking. Everything else always asks, in every mode including Never ask: other sites, other chats, a chat name that cannot be read or that two rows share. The prompt names the open WhatsApp chat (or the site, when there is none or its name cannot be read) and lists every file by name and path, plus the real path when a symlink points elsewhere (`tax.pdf (/tmp/vacation.jpg → /home/you/private/tax.pdf)`); it offers no "Always allow", and saved decisions do not apply. Right before the files are set, every upload checks again that the page origin and the open chat are still the ones allowed or approved; otherwise nothing is attached.
-- Group confinement and STOP work as for every other step.
-
-## Safety model
-
-| Layer | Guarantee |
-|-------|-----------|
-| Bridge | Listens on `127.0.0.1` only. Accepts a connection only from a `chrome-extension://` Origin that completes the HMAC challenge-response within 5 seconds and sends at most 4 KiB before it does; the token is never sent. The extension talks only to a listener that proved it knows the token. One extension at a time. |
-| Group | Every tab-scoped request goes through the calling session's group check in the extension, repeated before every input event; the debugger attaches only to tabs in a live session's group. |
-| Actions | One at a time across all tabs (the tools also run sequentially). |
-| Policy | Decided in the extension from settings only you change: the popup, `/browser level` (which confirms before Never ask), `/browser rules`, and the Always allow/deny answers to its own prompts. |
-| Sessions | The helper only answers this extension's fixed id. Each connection is bound to one session id; a session reads and acts only on its own group, and its approvals are asked in its own terminal. |
-| Approval | Asked in the terminal of the session that started the action; any failure is a denial. |
-| STOP | The **STOP** button on the page fails the running and waiting actions of the session acting on that tab ("Stopped by the user in Chrome."), removes the cursor from their tabs and aborts that session's run; other sessions' actions go on. When no other action is left it also detaches the debugger. The popup's **STOP** stops every session's actions, detaches the debugger and aborts every connected session's run. When a session disconnects, the extension stops only that session's actions, or removes the cursor and the debugger from its tabs. |
-| Visibility | While the debugger is attached, Chrome shows its "started debugging this browser" bar. Cancelling it detaches; the next action attaches again. |
-
-## Look and feel
-
-The popup and the on-page cursor, highlight, label and STOP banner follow the [Gentleman Programming](https://gentlemanprogramming.com/) dark rose palette. The popup uses Iosevka, bundled in `extension/fonts/` (latin 400/700 from `@fontsource/iosevka` 5.3.0, SIL Open Font License 1.1, see `extension/fonts/OFL.txt`). Pages cannot load extension fonts without exposing them to every site, so the on-page overlay uses Iosevka Term or JetBrains Mono when installed and falls back to the system monospace font.
+The safety model, layer by layer, is in [the architecture notes](docs/ARCHITECTURE.md#safety-model).
 
 ## Limitations
 
-- **Some page changes cannot be paused.** Navigation is paused only when a new document is requested from the network. In-page (SPA) route changes, pages restored from the back-forward cache and prerendered pages that Chrome activates never make that request. They are detected afterwards: the cursor label shows "Page changed without approval → …" and the agent is told. Service workers are bypassed during an action so their navigations do reach the check; for that the extension turns on the debugger's Network domain for the action's duration.
+- **Some page changes cannot be paused.** In-page (SPA) route changes, pages restored from the back-forward cache and prerendered pages are detected only afterwards; the agent is told.
 - **iframes are not inspected.** Snapshots skip their content (and say how many there are); sub-frame loads are not paused.
 - **Your own navigation in the acting tab** during the 1.5 seconds after an agent action is treated as the agent's and asked too.
-- **Late new tabs.** A tab Chrome adds to the group more than 2 seconds after a group tab opened it, with no action running, stays in the group. A tab you drag into the group within those 2 seconds may be taken out once; drag it again.
-- **Detectable by anti-bot sites.** Attaching the debugger enables `Runtime`, which some sites detect.
+- **Late new tabs.** A tab Chrome adds to the group more than 2 seconds after a group tab opened it, with no action running, stays in the group.
+- **Detectable by anti-bot sites.** Attaching the debugger enables `Runtime`, which some sites detect. Chrome also shows its "started debugging this browser" bar while the agent acts.
 - **Up to 100 sessions** (ports 48733–48832) at the same time.
-- **Chrome restart.** Group ids change; a restored group with the session's title is adopted by its title. If Chrome does not restore it, the next `open` step creates a new one. A group whose session ended while the extension was not running is renamed "(ended)" at the next discovery.
-- **The helper starts WSL.** Each discovery runs the helper through `%SystemRoot%\System32\wsl.exe` (a full path, so it works even when Chrome was started without System32 on its PATH), which takes a moment; the popup may show `Looking for Gentle Shell…` briefly.
-- **A held new tab** whose web address does not show within 3 seconds (for example a blank `window.open`) is asked for in Remember my decisions even with saved allows: it has no site yet.
+- **Chrome restart.** Group ids change; a restored group with the session's title is adopted by its title, otherwise the next `open` step creates a new one.
+- **On WSL the helper starts WSL.** Each discovery runs the helper through `%SystemRoot%\System32\wsl.exe`, which takes a moment; the popup may show `Looking for Gentle Shell…` briefly.
+- **WhatsApp Web's markup is not documented.** If WhatsApp changes it, the watch may stop noticing messages until the reader is updated.
+
+More in [the architecture notes](docs/ARCHITECTURE.md#limitations-in-detail).
 
 ## Troubleshooting
 
 | Symptom | Fix |
 |---------|-----|
-| Popup says **Gentle Shell helper not installed — run scripts/install-extension.sh once** | Run the script; it registers the helper. If it still shows, reload the extension once in `chrome://extensions`. |
-| Popup says **Gentle Shell helper sent an invalid reply** | The helper and the extension come from different checkouts: run `scripts/install-extension.sh` again. |
+| Popup says **Gentle Shell helper not installed — run scripts/install-extension.sh once** | Run the install for your platform (`npm run install-extension`, or `scripts/install-extension.sh` on WSL); it registers the helper. If it still shows, reload the extension once in `chrome://extensions`. |
+| Popup says **Gentle Shell helper sent an invalid reply** | The helper and the extension come from different checkouts: run the install again. |
+| The helper is not found on Linux or macOS | Check that `dev.gentle.shell.json` exists in the browser's `NativeMessagingHosts` folder (see [step 2](#2-extension-and-helper)). Chromium uses its own folder, which the install fills only when it exists: run the install again after starting Chromium once. |
+| You use Brave, Edge, Vivaldi or another Chromium browser on Linux or macOS | Run the install with `GENTLE_CHROME_NATIVE_HOSTS_DIR` set to that browser's `NativeMessagingHosts` folder. |
 | A session never connects (**untrusted**) | The listener on its port could not prove it knows the token: another program took the port. Turn the popup switch Off and On; restart that Gentle Shell session if it persists. |
-| `/browser status` says the helper reads another folder, or that none is installed for this folder | The helper and the session use different config folders, so Chrome never sees the session. Run the command the line prints (`GENTLE_CHROME_CONFIG_DIR='…' scripts/install-extension.sh`), then open the popup. |
+| `/browser status` says the helper reads another folder, or that none is installed for this folder | The helper and the session use different config folders, so Chrome never sees the session. Run the command the line prints (see [the commands per platform](#2-extension-and-helper)), then open the popup. |
 | Gentle Shell or `/browser status` says the helper starts Node from a folder that no longer exists | A reinstall or Node upgrade removed the Node the helper was installed with. Run `/browser update` (or the command the line prints), then open the popup. |
 | `scripts/install-extension.sh` says it could not tell which WSL distribution this is | Run it with `WSL_DISTRO_NAME` set to this distribution's name, as `wsl.exe -l -q` lists it. |
 | No sessions listed, or a session stays **waiting** | Check `/browser status` in that session; run `/browser start`. A `GENTLE_CHROME_PORT` outside 48733–48832 is never connected. |
-| A session disconnects (**replaced**) | Another Chrome profile or window with the extension took that session. It reconnects at the next session check (within 30 seconds), taking the session back; turn the switch Off and On to take it back now. |
+| A session disconnects (**replaced**) | Another Chrome profile or window with the extension took that session. It reconnects at the next session check (within 30 seconds); turn the switch Off and On to take it back now. |
 | "Tab N is not in the Gentle Shell group" | Drag the tab into this session's group, or ask the agent to open a page (`browser_act` with `open`). |
 | Every step is denied | Check the terminal for the prompt; answers time out after 5 minutes. |
 | A step is denied without a prompt ("saved rule: deny …") | You saved Always deny for that site and kind: `/browser rules` lists it; `/browser rules clear <site>` or the popup removes it. |
-| Changes do not show in Chrome | Run `/browser update`. If it says no folder is recorded, run `scripts/install-extension.sh` once. If it asks for a manual reload, press reload on the card in `chrome://extensions` once. |
+| Changes do not show in Chrome | Run `/browser update`. If it says no folder is recorded, run the install once. If it asks for a manual reload, press reload on the card in `chrome://extensions` once. |
 
 ## Development
 
 ```sh
-pnpm install
-node --test "test/**/*.test.ts"   # unit tests (Node 22.18+, no build step)
-npx tsc --noEmit                  # type check (src, test and the extension JS they import)
+npm install
+npm test            # unit tests (Node 22.18+, no build step)
+npm run typecheck   # type check (src, test and the extension JS they import)
 ```
 
-| Path | Contents |
-|------|----------|
-| `src/index.ts` | Pi extension entry: `/browser` command, tools, approval prompt wiring. |
-| `src/bridge.ts`, `src/token.ts` | Authenticated loopback WebSocket and the shared token. |
-| `src/sessions.ts`, `src/host.ts` | Per-session ports and records; the native messaging host that lists them. |
-| `src/update.ts` | Build id, the extension copy used by the install script, and self-update. |
-| `src/tools.ts`, `src/approval.ts` | The `browser_*` tools and the terminal approval prompt. |
-| `extension/background.js` | Service worker: wiring, discovery, popup requests. |
-| `extension/lib/sessions.js` | Discovery reply check, one connection and group per session, per-session request table, approval and STOP routing. |
-| `extension/lib/group.js` | The tab group boundary. |
-| `extension/lib/policy.js`, `navguard.js` | Permission modes, kinds of step, saved decisions, risky pages and actions, the navigation pause and new-tab hold. |
-| `extension/lib/actions.js`, `overlay.js` | Input through CDP and the ghost cursor. |
+How the pieces fit together, the source file map and the safety model are in **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.

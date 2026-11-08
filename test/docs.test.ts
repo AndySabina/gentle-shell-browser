@@ -63,6 +63,12 @@ test("docs/GUIDE.md exists and the README links to it", () => {
 	assert.match(read(readmePath), /\]\(docs\/GUIDE\.md(#[^)]*)?\)/);
 });
 
+test("the README names every supported platform and links Gentle Shell's repository", () => {
+	const readme = read(readmePath);
+	for (const platform of ["Linux", "macOS", "Windows", "WSL"]) assert.match(readme, new RegExp(`\\b${platform}`), `README names ${platform}`);
+	assert.ok(readme.includes("](https://github.com/Gentleman-Programming/gentle-shell)"), "README links Gentle Shell's repository");
+});
+
 test("every image in docs/GUIDE.md and README.md is an existing PNG", () => {
 	let count = 0;
 	for (const path of [guidePath, readmePath]) {
