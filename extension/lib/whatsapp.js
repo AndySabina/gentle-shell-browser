@@ -117,12 +117,24 @@ export const isTyping = (chat) => TYPING.test(chat.preview);
 /** @param {Chat} chat a new message raises the unread count */
 const signature = (chat) => (chat.unread > 0 ? String(chat.unread) : "read");
 
+/** How many already handled messages each chat remembers. */
+const MAX_KNOWN = 20;
+
 export class WhatsAppWatch {
 	/** @param {WatchDeps} deps */
 	constructor(deps) {
 		this.deps = deps;
 		/** @type {Map<number, Map<string, string>>} per tab, what each chat looked like at the last report */
 		this.seen = new Map();
+		/** @type {Map<number, Chat[]>} per tab, the chat list of the last read */
+		this.chats = new Map();
+		/**
+		 * Per chat, the last messages that rang or were unread when the watch
+		 * started: WhatsApp can show one unread again after the agent read it,
+		 * and that must not ring twice.
+		 * @type {Map<string, string[]>}
+		 */
+		this.known = new Map();
 		/** @type {Map<string, {lastRead?: {at: string, chats: number, allowed: {name: string, unread: number, typing?: boolean, ambiguous?: boolean}[]}, lastRing?: {chat: string, at: string, delivered: boolean, error?: string}}>} */
 		this.diagnostics = new Map();
 		/** @type {Promise<unknown>} allow-list changes run one at a time */
@@ -204,7 +216,7 @@ export class WhatsAppWatch {
 				this.seen.delete(tabId);
 				const rows = await this.deps.read(tabId).catch(() => undefined);
 				if (!rows) continue;
-				this.baseline(tabId, parseRows(rows));
+				this.baseline(tabId, parseRows(rows), true);
 				await this.noteRead(session.id, parseRows(rows));
 			}
 			watched[session.id] = true;
@@ -213,6 +225,7 @@ export class WhatsAppWatch {
 			// Off means nothing reads the chats: the reader leaves the tabs.
 			for (const tabId of await this.whatsappTabs(session)) {
 				this.seen.delete(tabId);
+				this.chats.delete(tabId);
 				await this.deps.stop?.(tabId).catch(() => {});
 			}
 		}
@@ -225,9 +238,40 @@ export class WhatsAppWatch {
 	/**
 	 * @param {number} tabId
 	 * @param {Chat[]} chats
+	 * @param {boolean} [settled] the unread messages shown count as handled
 	 */
-	baseline(tabId, chats) {
+	baseline(tabId, chats, settled = false) {
+		this.chats.set(tabId, chats);
 		this.seen.set(tabId, new Map(chats.map((chat) => [chatKey(chat.name), signature(chat)])));
+		if (!settled) return;
+		for (const chat of chats) if (chat.unread > 0 && !isTyping(chat)) this.remember(chat);
+	}
+
+	/**
+	 * How many messages `chat` shows unread in `session`'s tab `tabId`, as the
+	 * last read saw it; 0 for a chat or tab it did not see. Only reads.
+	 * @param {WatchSession} session
+	 * @param {unknown} chat
+	 * @param {unknown} tabId
+	 * @returns {Promise<{unread: number, preview?: string}>}
+	 */
+	async unread(session, chat, tabId) {
+		if (typeof chat !== "string" || !Number.isInteger(tabId) || !(await session.group.contains(/** @type {number} */ (tabId)))) return { unread: 0 };
+		const found = this.chats.get(/** @type {number} */ (tabId))?.find((row) => chatKey(row.name) === chatKey(chat));
+		return found ? { unread: found.unread, preview: found.preview } : { unread: 0 };
+	}
+
+	/** @param {Chat} chat */
+	remember(chat) {
+		const key = chatKey(chat.name);
+		const known = (this.known.get(key) ?? []).filter((preview) => preview !== chat.preview);
+		known.push(chat.preview);
+		this.known.set(key, known.slice(-MAX_KNOWN));
+	}
+
+	/** @param {Chat} chat */
+	isKnown(chat) {
+		return this.known.get(chatKey(chat.name))?.includes(chat.preview) ?? false;
 	}
 
 	/**
@@ -244,7 +288,7 @@ export class WhatsAppWatch {
 		if (!owner || !(await this.watching(owner.id))) return;
 		const rows = await this.deps.read(tabId).catch(() => undefined);
 		if (!rows) return;
-		this.baseline(tabId, parseRows(rows));
+		this.baseline(tabId, parseRows(rows), true);
 		await this.noteRead(owner.id, parseRows(rows));
 	}
 
@@ -294,7 +338,7 @@ export class WhatsAppWatch {
 		const allowed = new Set((await this.allowList()).map(chatKey));
 		const diagnostics = await this.noteRead(owner.id, chats);
 		const before = this.seen.get(tabId);
-		this.baseline(tabId, chats);
+		this.baseline(tabId, chats, !before);
 		// A chat showing a typing status keeps what it looked like before.
 		const seen = /** @type {Map<string, string>} */ (this.seen.get(tabId));
 		for (const chat of chats) {
@@ -309,6 +353,11 @@ export class WhatsAppWatch {
 			const key = chatKey(chat.name);
 			// Two chats with an allowed name: either could be someone else's, so neither rings.
 			if (chat.unread === 0 || chat.ambiguous || isTyping(chat) || !allowed.has(key) || before.get(key) === signature(chat)) continue;
+			// A count that rose from a nonzero count means new messages, whatever their text.
+			const previous = Number(before.get(key));
+			const rose = previous > 0 && chat.unread > previous;
+			// A message that already rang, shown unread again after the chat was read, is not new.
+			if (!rose && this.isKnown(chat)) continue;
 			/** @type {{chat: string, at: string, delivered: boolean, error?: string}} */
 			const ring = { chat: chat.name, at: new Date().toISOString(), delivered: false };
 			try {
@@ -316,6 +365,7 @@ export class WhatsAppWatch {
 				await owner.connection.call("whatsappMessage", { chat: chat.name, unread: chat.unread, preview: chat.preview, tabId });
 				ring.delivered = true;
 				delete ring.error;
+				this.remember(chat);
 			} catch (error) {
 				ring.error = error instanceof Error ? error.message : String(error);
 			}

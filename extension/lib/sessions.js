@@ -492,5 +492,8 @@ export function sessionHandlers(manager, session, deps) {
 		allowChat: (params) => deps.watch.allow(params?.chat),
 		/** @param {any} params */
 		removeChat: (params) => deps.watch.remove(params?.chat),
+		// Asked when the agent ends, for a message that arrived while it ran.
+		/** @param {any} params */
+		whatsappUnread: (params) => deps.watch.unread(session, params?.chat, params?.tabId),
 	};
 }

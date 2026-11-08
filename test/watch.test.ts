@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { USAGE } from "../src/index.ts";
-import { refreshWatchStatus, WATCH_USAGE, wakeMessage, watchCommand, watchHandlers } from "../src/watch.ts";
+import gentleChrome, { USAGE } from "../src/index.ts";
+import { HeldWakes, PendingWakes, refreshWatchStatus, WATCH_USAGE, wakeMessage, watchCommand, watchHandlers } from "../src/watch.ts";
 
 function fakeController(replies: Record<string, (params: any) => unknown> = {}, running = true) {
 	const calls: { method: string; params: any }[] = [];
@@ -117,6 +117,51 @@ test("a new message wakes the agent as a follow-up turn, and a malformed one is 
 	assert.deepEqual(statuses, []);
 });
 
+test("a burst of messages from one chat queues one wake until Pi delivers it", () => {
+	const sent: { message: any; options: any }[] = [];
+	const pending = new PendingWakes();
+	const handlers = watchHandlers((message, options) => sent.push({ message, options }), () => {}, pending);
+	const wake = (chat: string, unread: number, preview: string) => handlers.whatsappMessage({ chat, unread, preview, tabId: 7 });
+	assert.deepEqual(wake("Andy", 7, "Prueba 1"), { queued: true });
+	assert.deepEqual(wake("Andy", 8, "Prueba 2"), { queued: true });
+	assert.deepEqual(wake("Andy", 9, "Prueba 3"), { queued: true });
+	// Another chat gets its own wake.
+	wake("Mamá", 1, "hola");
+	assert.deepEqual(sent.map((entry) => entry.message.details.preview), ["Prueba 1", "hola"]);
+	// Pi delivered Andy's wake: the next message from Andy queues a new one.
+	pending.delivered({ role: "custom", customType: "gentle-chrome-whatsapp", details: sent[0].message.details });
+	wake("Andy", 1, "Prueba 4");
+	assert.deepEqual(sent.map((entry) => entry.message.details.preview), ["Prueba 1", "hola", "Prueba 4"]);
+	// Other messages do not clear a pending wake.
+	pending.delivered({ role: "user", content: "hola" });
+	pending.delivered({ role: "custom", customType: "other", details: { chat: "Mamá" } });
+	wake("Mamá", 2, "¿estás?");
+	assert.equal(sent.length, 3);
+});
+
+test("the extension listens for delivered messages, so a delivered wake stops waiting", () => {
+	const events: string[] = [];
+	const pi = { on: (name: string) => events.push(name), registerCommand: () => {}, registerTool: () => {}, getActiveTools: () => [], setActiveTools: () => {}, sendMessage: () => {}, getSessionName: () => undefined };
+	gentleChrome(pi as any);
+	assert.ok(events.includes("message_start"), events.join(", "));
+});
+
+test("chat names in pending wakes match ignoring case and extra spaces", () => {
+	const sent: unknown[] = [];
+	const pending = new PendingWakes();
+	const handlers = watchHandlers((message) => sent.push(message), () => {}, pending);
+	handlers.whatsappMessage({ chat: "Andy", unread: 1, preview: "a", tabId: 7 });
+	handlers.whatsappMessage({ chat: "  andy ", unread: 2, preview: "b", tabId: 7 });
+	assert.equal(sent.length, 1);
+	pending.delivered({ role: "custom", customType: "gentle-chrome-whatsapp", details: { chat: "ANDY" } });
+	handlers.whatsappMessage({ chat: "Andy", unread: 1, preview: "c", tabId: 7 });
+	assert.equal(sent.length, 2);
+});
+
+test("the wake message tells the agent not to reply when the chat has nothing new", () => {
+	assert.match(wakeMessage({ chat: "Andy", unread: 1, preview: "hola", tabId: 7 }), /If the chat shows no message after your last reply, it was already answered: do not reply; press Escape and stop\./);
+});
+
 test("the status line follows the watch switch", () => {
 	const statuses: (string | undefined)[] = [];
 	const handlers = watchHandlers(() => {}, (text) => statuses.push(text));
@@ -139,4 +184,89 @@ test("on connect the status line reads the extension's switch; off when disconne
 
 test("the wake message asks the agent to close the chat after replying, so the next message can ring", () => {
 	assert.match(wakeMessage({ chat: "Andy", unread: 1, preview: "hola", tabId: 7 }), /press Escape to close the chat/);
+});
+
+function busySession(answers: Record<string, (params: any) => unknown> = {}) {
+	const sent: { message: any; options: any }[] = [];
+	const asked: any[] = [];
+	const held = new HeldWakes();
+	const handlers = watchHandlers((message, options) => sent.push({ message, options }), () => {}, new PendingWakes(), held);
+	const call = async (method: string, params: any) => {
+		asked.push({ method, params });
+		const answer = Object.entries(answers).find(([chat]) => chat.toLowerCase() === params.chat.trim().toLowerCase())?.[1];
+		if (method !== "whatsappUnread" || !answer) throw new Error(`Unknown method: ${method}`);
+		return answer(params);
+	};
+	return { sent, asked, held, handlers, end: () => held.agentEnded(call, handlers.whatsappMessage) };
+}
+
+test("while the agent runs, messages from a chat wait; at the end a chat already read sends nothing", async () => {
+	const { sent, asked, held, handlers, end } = busySession({ Andy: () => ({ unread: 0 }) });
+	held.agentStarted();
+	assert.deepEqual(handlers.whatsappMessage({ chat: "Andy", unread: 1, preview: "Prueba 1", tabId: 7 }), { queued: true });
+	assert.deepEqual(handlers.whatsappMessage({ chat: "andy", unread: 2, preview: "2", tabId: 7 }), { queued: true });
+	assert.deepEqual(handlers.whatsappMessage({ chat: " ANDY  ", unread: 3, preview: "Que vola", tabId: 7 }), { queued: true });
+	assert.throws(() => handlers.whatsappMessage({ chat: "Andy", unread: 0, preview: "", tabId: 7 }), /Invalid WhatsApp message/);
+	assert.equal(sent.length, 0);
+	await end();
+	assert.deepEqual(asked, [{ method: "whatsappUnread", params: { chat: " ANDY  ", tabId: 7 } }]);
+	assert.equal(sent.length, 0);
+	// The held wake is gone: the next end asks nothing.
+	await end();
+	assert.equal(asked.length, 1);
+});
+
+test("at the end of a run a chat that still has unread messages sends one wake with the fresh count and preview", async () => {
+	const { sent, held, handlers, end } = busySession({ Andy: () => ({ unread: 2, preview: "Que vola" }) });
+	held.agentStarted();
+	handlers.whatsappMessage({ chat: "Andy", unread: 1, preview: "Prueba 1", tabId: 7 });
+	handlers.whatsappMessage({ chat: "Andy", unread: 3, preview: "viejo", tabId: 7 });
+	await end();
+	assert.equal(sent.length, 1);
+	assert.deepEqual(sent[0].message.details, { chat: "Andy", unread: 2, preview: "Que vola", tabId: 7 });
+	assert.equal(sent[0].message.content, wakeMessage({ chat: "Andy", unread: 2, preview: "Que vola", tabId: 7 }));
+	assert.equal(sent[0].message.customType, "gentle-chrome-whatsapp");
+	assert.deepEqual(sent[0].options, { triggerTurn: true, deliverAs: "followUp" });
+});
+
+test("when the extension cannot answer or is older, the held wake is sent as it arrived", async () => {
+	const { sent, held, handlers, end } = busySession({ Fail: () => Promise.reject(new Error("disconnected")), Odd: () => ({ unread: "many" }) });
+	held.agentStarted();
+	handlers.whatsappMessage({ chat: "Fail", unread: 1, preview: "a", tabId: 7 });
+	handlers.whatsappMessage({ chat: "Old", unread: 2, preview: "b", tabId: 7 });
+	handlers.whatsappMessage({ chat: "Odd", unread: 3, preview: "c", tabId: 7 });
+	await end();
+	assert.deepEqual(sent.map((entry) => entry.message.details), [
+		{ chat: "Fail", unread: 1, preview: "a", tabId: 7 },
+		{ chat: "Old", unread: 2, preview: "b", tabId: 7 },
+		{ chat: "Odd", unread: 3, preview: "c", tabId: 7 },
+	]);
+});
+
+test("two held chats are checked independently", async () => {
+	const { sent, asked, held, handlers, end } = busySession({ Andy: () => ({ unread: 0 }), Mamá: () => ({ unread: 1, preview: "¿venís?" }) });
+	held.agentStarted();
+	handlers.whatsappMessage({ chat: "Andy", unread: 1, preview: "hola", tabId: 7 });
+	handlers.whatsappMessage({ chat: "Mamá", unread: 1, preview: "¿venís?", tabId: 9 });
+	await end();
+	assert.deepEqual(asked.map((entry) => entry.params), [{ chat: "Andy", tabId: 7 }, { chat: "Mamá", tabId: 9 }]);
+	assert.deepEqual(sent.map((entry) => entry.message.details), [{ chat: "Mamá", unread: 1, preview: "¿venís?", tabId: 9 }]);
+});
+
+test("while idle a message still wakes the agent at once, and after a run ends it does again", async () => {
+	const { sent, asked, held, handlers, end } = busySession();
+	handlers.whatsappMessage({ chat: "Andy", unread: 1, preview: "hola", tabId: 7 });
+	assert.equal(sent.length, 1);
+	held.agentStarted();
+	await end();
+	assert.deepEqual(asked, []);
+	handlers.whatsappMessage({ chat: "Mamá", unread: 1, preview: "hola", tabId: 7 });
+	assert.equal(sent.length, 2);
+});
+
+test("the extension listens for the agent's start and end, so messages wait while it runs", () => {
+	const events: string[] = [];
+	const pi = { on: (name: string) => events.push(name), registerCommand: () => {}, registerTool: () => {}, getActiveTools: () => [], setActiveTools: () => {}, sendMessage: () => {}, getSessionName: () => undefined };
+	gentleChrome(pi as any);
+	assert.ok(events.includes("agent_start") && events.includes("agent_end"), events.join(", "));
 });
