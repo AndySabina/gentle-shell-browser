@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -250,4 +250,16 @@ test("the POSIX launcher starts the host bound to its folder and answers a frame
 	assert.equal(stderr, "");
 	assert.equal(code, 0);
 	assert.deepEqual(Buffer.concat(stdout), encodeMessage({ token: loadOrCreateToken(bound), sessions: [{ id, name: "linux", port: 48743 }] }));
+});
+
+test("the POSIX launcher passes a folder with shell metacharacters as one literal argument", () => {
+	const dir = mkdtempSync(join(tmpdir(), "gentle-host-inj-"));
+	const cfg = `${dir}/a'$(touch ${dir}/PWNED)\`touch ${dir}/PWNED2\`;x \\ "q" '`;
+	// printf stands in for node: it prints its arguments, so the launcher's quoting is observed without running the host.
+	const { launcher } = posixHostFiles({ nodePath: "/usr/bin/printf", hostScript: "%s\\n", extensionId: "x", hostDir: dir, configDir: cfg });
+	const path = join(dir, "l.sh");
+	writeFileSync(path, launcher, { mode: 0o755 });
+	assert.equal(execFileSync(path, { encoding: "utf8" }), `--config-dir\n${cfg}\n`);
+	assert.deepEqual(readdirSync(dir), ["l.sh"]);
+	rmSync(dir, { recursive: true, force: true });
 });

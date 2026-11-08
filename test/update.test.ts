@@ -608,3 +608,13 @@ test("setup on WSL without a folder points to the install script and writes noth
 	assert.deepEqual(cli(["setup"], env), { code: 1, stdout: "", stderr: "install-extension: on WSL run scripts/install-extension.sh: it finds your Windows profile folder.\n" });
 	assert.deepEqual(readdirSync(dir), []);
 });
+
+test("setup with an unknown GENTLE_CHROME_PLATFORM refuses and writes nothing", () => {
+	const dir = scratch();
+	assert.deepEqual(cli(["setup", join(dir, "ext")], { GENTLE_CHROME_PLATFORM: "beos", GENTLE_CHROME_CONFIG_DIR: join(dir, "cfg"), GENTLE_CHROME_DURABLE_DIR: join(dir, "d") }), {
+		code: 1,
+		stdout: "",
+		stderr: "install-extension: GENTLE_CHROME_PLATFORM must be one of wsl, linux, darwin, win32 (got beos).\n",
+	});
+	assert.deepEqual(readdirSync(dir), []);
+});
