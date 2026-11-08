@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { USAGE } from "../src/index.ts";
-import { refreshWatchStatus, WATCH_USAGE, wakeMessage, watchCommand, watchHandlers } from "../src/watch.ts";
+import gentleChrome, { USAGE } from "../src/index.ts";
+import { PendingWakes, refreshWatchStatus, WATCH_USAGE, wakeMessage, watchCommand, watchHandlers } from "../src/watch.ts";
 
 function fakeController(replies: Record<string, (params: any) => unknown> = {}, running = true) {
 	const calls: { method: string; params: any }[] = [];
@@ -115,6 +115,51 @@ test("a new message wakes the agent as a follow-up turn, and a malformed one is 
 	}
 	assert.equal(sent.length, 1);
 	assert.deepEqual(statuses, []);
+});
+
+test("a burst of messages from one chat queues one wake until Pi delivers it", () => {
+	const sent: { message: any; options: any }[] = [];
+	const pending = new PendingWakes();
+	const handlers = watchHandlers((message, options) => sent.push({ message, options }), () => {}, pending);
+	const wake = (chat: string, unread: number, preview: string) => handlers.whatsappMessage({ chat, unread, preview, tabId: 7 });
+	assert.deepEqual(wake("Andy", 7, "Prueba 1"), { queued: true });
+	assert.deepEqual(wake("Andy", 8, "Prueba 2"), { queued: true });
+	assert.deepEqual(wake("Andy", 9, "Prueba 3"), { queued: true });
+	// Another chat gets its own wake.
+	wake("Mamá", 1, "hola");
+	assert.deepEqual(sent.map((entry) => entry.message.details.preview), ["Prueba 1", "hola"]);
+	// Pi delivered Andy's wake: the next message from Andy queues a new one.
+	pending.delivered({ role: "custom", customType: "gentle-chrome-whatsapp", details: sent[0].message.details });
+	wake("Andy", 1, "Prueba 4");
+	assert.deepEqual(sent.map((entry) => entry.message.details.preview), ["Prueba 1", "hola", "Prueba 4"]);
+	// Other messages do not clear a pending wake.
+	pending.delivered({ role: "user", content: "hola" });
+	pending.delivered({ role: "custom", customType: "other", details: { chat: "Mamá" } });
+	wake("Mamá", 2, "¿estás?");
+	assert.equal(sent.length, 3);
+});
+
+test("the extension listens for delivered messages, so a delivered wake stops waiting", () => {
+	const events: string[] = [];
+	const pi = { on: (name: string) => events.push(name), registerCommand: () => {}, registerTool: () => {}, getActiveTools: () => [], setActiveTools: () => {}, sendMessage: () => {}, getSessionName: () => undefined };
+	gentleChrome(pi as any);
+	assert.ok(events.includes("message_start"), events.join(", "));
+});
+
+test("chat names in pending wakes match ignoring case and extra spaces", () => {
+	const sent: unknown[] = [];
+	const pending = new PendingWakes();
+	const handlers = watchHandlers((message) => sent.push(message), () => {}, pending);
+	handlers.whatsappMessage({ chat: "Andy", unread: 1, preview: "a", tabId: 7 });
+	handlers.whatsappMessage({ chat: "  andy ", unread: 2, preview: "b", tabId: 7 });
+	assert.equal(sent.length, 1);
+	pending.delivered({ role: "custom", customType: "gentle-chrome-whatsapp", details: { chat: "ANDY" } });
+	handlers.whatsappMessage({ chat: "Andy", unread: 1, preview: "c", tabId: 7 });
+	assert.equal(sent.length, 2);
+});
+
+test("the wake message tells the agent not to reply when the chat has nothing new", () => {
+	assert.match(wakeMessage({ chat: "Andy", unread: 1, preview: "hola", tabId: 7 }), /If the chat shows no message after your last reply, it was already answered: do not reply; press Escape and stop\./);
 });
 
 test("the status line follows the watch switch", () => {
