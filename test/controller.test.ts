@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHmac, randomBytes } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -28,9 +28,11 @@ function authenticate(socket: WebSocket, token: string) {
 
 function controller(overrides: Partial<ConstructorParameters<typeof BrowserController>[0]> = {}) {
 	const configDir = mkdtempSync(join(tmpdir(), "gentle-chrome-ctl-"));
+	// Never the real home's record.
+	const durableDir = mkdtempSync(join(tmpdir(), "gentle-chrome-durable-"));
 	const statuses: (string | undefined)[] = [];
-	const ctl = new BrowserController({ configDir, port: 0, sessionName: () => "chrome", abort: () => {}, setStatus: (text) => statuses.push(text), ...overrides });
-	return { ctl, configDir: overrides.configDir ?? configDir, statuses };
+	const ctl = new BrowserController({ configDir, durableDir, port: 0, sessionName: () => "chrome", abort: () => {}, setStatus: (text) => statuses.push(text), ...overrides });
+	return { ctl, configDir: overrides.configDir ?? configDir, durableDir: overrides.durableDir ?? durableDir, statuses };
 }
 
 test("there is no pairing code anymore: the native messaging host hands the extension the token", () => {
@@ -127,7 +129,7 @@ test("each controller has its own session id", () => {
 
 test("without an explicit port two sessions scan to different ports and each registers itself", async () => {
 	const first = controller({ port: undefined });
-	const second = new BrowserController({ configDir: first.configDir, sessionName: () => ` ${"n".repeat(70)}`, abort: () => {} });
+	const second = new BrowserController({ configDir: first.configDir, durableDir: first.durableDir, sessionName: () => ` ${"n".repeat(70)}`, abort: () => {} });
 	const exitListeners = process.listenerCount("exit");
 	try {
 		await Promise.all([first.ctl.start(), second.start()]);
@@ -228,7 +230,7 @@ function updater(options: { record?: boolean } = {}) {
 	const notices: string[] = [];
 	const parts = controller({ extensionDir, notify: (text: string) => notices.push(text), updateRetryMs: 10 });
 	const targetDir = join(mkdtempSync(join(tmpdir(), "gentle-chrome-target-")), "gentle-shell-chrome");
-	if (options.record !== false) installExtension({ sourceDir: extensionDir, targetDir, configDir: parts.configDir });
+	if (options.record !== false) installExtension({ sourceDir: extensionDir, targetDir, configDir: parts.configDir, durableDir: parts.durableDir });
 	// The repo moves ahead of the copy Chrome has.
 	writeFileSync(join(extensionDir, "background.js"), "// v2\n");
 	return { ...parts, extensionDir, targetDir, notices, build: buildId(extensionDir) };
@@ -475,6 +477,20 @@ test("/browser update copies now and reports what Chrome runs", async () => {
 		await waitUntil(() => ctl.status()[0].includes("Chrome connected"));
 		assert.deepEqual(await ctl.update(), [`Gentle Chrome: the Chrome extension is up to date (${build}).`]);
 		socket.close();
+	} finally {
+		await ctl.stop();
+	}
+});
+
+test("/browser update after a Gentle Shell update removed the config folder's record copies to the folder in the durable record", async () => {
+	const { ctl, configDir, targetDir, build } = updater();
+	rmSync(join(configDir, "extension-target"));
+	try {
+		await ctl.start();
+		assert.deepEqual(await ctl.update(), [`Gentle Chrome: copied build ${build} to ${targetDir}; Chrome is not connected, so it updates when it connects.`]);
+		assert.equal(readFileSync(join(targetDir, "background.js"), "utf8"), "// v2\n");
+		// The copy records the folder in the config folder again.
+		assert.equal(readFileSync(join(configDir, "extension-target"), "utf8"), `${targetDir}\n`);
 	} finally {
 		await ctl.stop();
 	}

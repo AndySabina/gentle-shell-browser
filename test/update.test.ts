@@ -58,6 +58,47 @@ test("installExtension copies the files, writes build.json and records the targe
 	assert.equal(recordedTarget(configDir), targetDir);
 });
 
+test("installExtension also records the target in the durable folder, which a Gentle Shell update does not replace", () => {
+	const sourceDir = source();
+	const targetDir = join(scratch(), "gentle-shell-chrome");
+	const configDir = join(scratch(), "config");
+	const durableDir = join(scratch(), "durable");
+	installExtension({ sourceDir, targetDir, configDir, durableDir });
+	for (const dir of [configDir, durableDir]) {
+		const record = join(dir, "extension-target");
+		assert.equal(readFileSync(record, "utf8"), `${targetDir}\n`, dir);
+		assert.equal(statSync(record).mode & 0o777, 0o600, dir);
+		assert.equal(statSync(dir).mode & 0o777, 0o700, dir);
+	}
+});
+
+test("installExtension writes one record when the durable folder is the config folder", () => {
+	const sourceDir = source();
+	const targetDir = join(scratch(), "gentle-shell-chrome");
+	const configDir = join(scratch(), "config");
+	installExtension({ sourceDir, targetDir, configDir, durableDir: `${configDir}/` });
+	assert.deepEqual(readdirSync(configDir), ["extension-target"]);
+	assert.equal(readFileSync(join(configDir, "extension-target"), "utf8"), `${targetDir}\n`);
+	assert.equal(recordedTarget(configDir, configDir), targetDir);
+});
+
+test("recordedTarget falls back to the durable record when a Gentle Shell update removed the config folder's, and prefers the config folder's", () => {
+	const sourceDir = source();
+	const targetDir = join(scratch(), "gentle-shell-chrome");
+	const configDir = join(scratch(), "config");
+	const durableDir = join(scratch(), "durable");
+	installExtension({ sourceDir, targetDir, configDir, durableDir, deps: hostDeps(() => undefined, process.execPath).deps });
+	// The update replaces the whole config folder.
+	renameSync(configDir, `${configDir}-old`);
+	assert.equal(recordedTarget(configDir, durableDir), targetDir);
+	assert.deepEqual(hostBinding(configDir, durableDir), { state: "bound", hostDir: `${targetDir}-host` });
+	assert.equal(recordedTarget(configDir), undefined);
+	mkdirSync(configDir);
+	writeFileSync(join(configDir, "extension-target"), "/mnt/c/Users/me/other\n");
+	assert.equal(recordedTarget(configDir, durableDir), "/mnt/c/Users/me/other");
+	assert.equal(recordedTarget(scratch(), scratch()), undefined);
+});
+
 test("installExtension updates a previous copy without deleting its other files", () => {
 	const sourceDir = source();
 	const configDir = scratch();

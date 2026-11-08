@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, userInfo } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { EXTENSION_ID, HOST_NAME, nativeHostFiles } from "./host.ts";
@@ -13,6 +13,10 @@ import { configDir } from "./token.ts";
  * stamps it with build.json (a hash of the files) and records the folder.
  * When the extension connects with another build, the controller copies the
  * files again and asks the extension to reload itself.
+ *
+ * The folder is also recorded in the user's real ~/.config/gentle-chrome: a
+ * Gentle Shell session points HOME and XDG_CONFIG_HOME into its install, and
+ * a Gentle Shell update replaces that config folder with its record.
  *
  * Install also writes the native messaging host into <target>-host and points
  * the Windows registry at its manifest, so Chrome can start the host.
@@ -31,6 +35,22 @@ const HOST_BAT = "gentle-shell-host.bat";
 const HOST_SCRIPT = fileURLToPath(new URL("./host.ts", import.meta.url));
 export const REGISTRY_KEY = `HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\${HOST_NAME}`;
 const REG_EXE = "/mnt/c/Windows/System32/reg.exe";
+
+/**
+ * Where the extension folder is also recorded: the account's home from the
+ * password database, which a Gentle Shell session's HOME does not change.
+ */
+export function durableConfigDir(): string {
+	return join(userInfo().homedir, ".config", "gentle-chrome");
+}
+
+/** Writes `targetDir` as the extension-target record in `dir` (0600, in a 0700 folder). */
+function writeRecord(dir: string, targetDir: string): void {
+	mkdirSync(dir, { recursive: true, mode: 0o700 });
+	const record = join(dir, TARGET_FILE);
+	writeFileSync(record, `${targetDir}\n`, { mode: 0o600 });
+	chmodSync(record, 0o600);
+}
 
 /** Every file under `dir`, as sorted relative POSIX paths. */
 function files(dir: string): string[] {
@@ -182,10 +202,11 @@ function checkTarget(sourceDir: string, targetDir: string): void {
 
 /**
  * Copies `sourceDir` into `targetDir` (overwriting, never deleting), writes
- * build.json and build.js, records `targetDir` for automatic updates, writes the native
- * host into `<targetDir>-host` and registers it when the registry differs.
+ * build.json and build.js, records `targetDir` for automatic updates (in
+ * `configDir`, and in `durableDir` when given), writes the native host into
+ * `<targetDir>-host` and registers it when the registry differs.
  */
-export function installExtension(options: { sourceDir: string; targetDir: string; configDir: string; deps?: InstallDeps }): {
+export function installExtension(options: { sourceDir: string; targetDir: string; configDir: string; durableDir?: string; deps?: InstallDeps }): {
 	build: string;
 	targetDir: string;
 	hostDir: string;
@@ -217,10 +238,8 @@ export function installExtension(options: { sourceDir: string; targetDir: string
 	cpSync(options.sourceDir, targetDir, { recursive: true, force: true, filter: (path) => !generated.has(resolve(path)) });
 	writeFileSync(join(targetDir, BUILD_FILE), `${JSON.stringify({ build })}\n`);
 	writeFileSync(join(targetDir, BUILD_MODULE), buildModule(build));
-	mkdirSync(options.configDir, { recursive: true, mode: 0o700 });
-	const record = join(options.configDir, TARGET_FILE);
-	writeFileSync(record, `${targetDir}\n`, { mode: 0o600 });
-	chmodSync(record, 0o600);
+	writeRecord(options.configDir, targetDir);
+	if (options.durableDir !== undefined && resolve(options.durableDir) !== resolve(options.configDir)) writeRecord(options.durableDir, targetDir);
 	mkdirSync(hostDir, { recursive: true });
 	writeFileSync(join(hostDir, HOST_MANIFEST), `${JSON.stringify(manifest, null, 2)}\n`);
 	writeFileSync(join(hostDir, HOST_BAT), bat);
@@ -236,14 +255,18 @@ export function installExtension(options: { sourceDir: string; targetDir: string
 	return { build, targetDir, hostDir, registered };
 }
 
-/** The folder the last install wrote to, if any. */
-export function recordedTarget(dir: string): string | undefined {
+function readRecord(dir: string): string | undefined {
 	try {
 		return readFileSync(join(dir, TARGET_FILE), "utf8").trim() || undefined;
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
 		throw error;
 	}
+}
+
+/** The folder the last install wrote to, if any: `dir`'s record, else `durableDir`'s when given. */
+export function recordedTarget(dir: string, durableDir?: string): string | undefined {
+	return readRecord(dir) ?? (durableDir === undefined ? undefined : readRecord(durableDir));
 }
 
 /**
@@ -271,10 +294,10 @@ function samePath(a: string, b: string): boolean {
 	return real(a) === real(b);
 }
 
-export function hostBinding(dir: string): HostBinding {
+export function hostBinding(dir: string, durableDir?: string): HostBinding {
 	let target: string | undefined;
 	try {
-		target = recordedTarget(dir);
+		target = recordedTarget(dir, durableDir);
 	} catch (error) {
 		return { state: "unknown", reason: error instanceof Error ? error.message : String(error) };
 	}
@@ -305,7 +328,8 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
 		process.exit(2);
 	}
 	try {
-		const result = installExtension({ sourceDir: REPO_EXTENSION_DIR, targetDir: target, configDir: configDir(process.env, homedir()) });
+		const durableDir = process.env.GENTLE_CHROME_DURABLE_DIR || durableConfigDir();
+		const result = installExtension({ sourceDir: REPO_EXTENSION_DIR, targetDir: target, configDir: configDir(process.env, homedir()), durableDir });
 		const registry = result.registered ? "updated" : registersByDefault(result.hostDir) ? "unchanged" : "skipped";
 		console.log(`${result.build}\n${result.hostDir}\n${registry}`);
 	} catch (error) {
