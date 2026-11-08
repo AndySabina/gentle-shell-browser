@@ -28,7 +28,7 @@ The extension makes every decision. The terminal only shows you the question, an
 
 ## 2. Requirements
 
-Everywhere you need **Google Chrome 120 or newer** (or Chromium), **Node.js 22.18 or newer**, **Gentle Shell**, and **git and npm** to get the code. Node, git and npm go where Gentle Shell runs.
+Everywhere you need **Google Chrome 120 or newer** (on Linux and macOS, Chromium and other Chromium browsers work too; on Windows and WSL the helper is registered for Google Chrome only), **Node.js 22.18 or newer**, **Gentle Shell**, and **git and npm** to get the code. Node, git and npm go where Gentle Shell runs.
 
 | Platform | Gentle Shell runs on | Chrome runs on |
 |----------|----------------------|----------------|
@@ -106,7 +106,7 @@ The helper must read the same config folder as your Gentle Shell sessions: the t
 | Linux, macOS | `GENTLE_CHROME_CONFIG_DIR='<config folder from /browser status>' npm run install-extension` |
 | Windows (PowerShell) | `$env:GENTLE_CHROME_CONFIG_DIR='<config folder from /browser status>'; npm run install-extension` |
 
-The install never deletes anything, only writes inside that folder, and refuses a non-empty folder that is not an earlier copy of the extension. At the end it prints the folder to load in Chrome.
+The install never deletes anything. It writes only the extension folder, the helper folder next to it (`-host`), its records in the config folder and the helper's registration, and it refuses a non-empty folder that is not an earlier copy of the extension. At the end it prints the folder to load in Chrome.
 
 On WSL2 you can run the script from inside a Gentle Shell session too. There `PATH` may lack the Windows folders and `WSL_DISTRO_NAME` is unset, so the script finds `cmd.exe` or `powershell.exe` in `C:\Windows\System32`, and the helper starts the WSL distribution that `wslpath -w /` names; the script prints which one. If it cannot tell and the folder is on a Windows drive, it stops before writing: run it again with `WSL_DISTRO_NAME` set to the name `wsl.exe -l -q` lists.
 

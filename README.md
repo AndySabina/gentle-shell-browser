@@ -30,7 +30,7 @@ New here? Read the step-by-step **[user guide](docs/GUIDE.md)**, with pictures o
 
 ## Requirements
 
-- **Google Chrome 120 or newer**, or Chromium.
+- **Google Chrome 120 or newer**. On Linux and macOS, Chromium and other Chromium browsers work too (see `GENTLE_CHROME_NATIVE_HOSTS_DIR`); on Windows and WSL the helper is registered for Google Chrome only.
 - **Node.js 22.18 or newer**, where Gentle Shell runs.
 - **[Gentle Shell](https://github.com/Gentleman-Programming/gentle-shell)**.
 - **git and npm**, to get the code and install its dependencies.
@@ -76,7 +76,7 @@ To use another folder, pass it as the only argument: `npm run install-extension 
 
 - Everything is installed for your user only; no admin rights are needed. Only this extension may start the helper: its id is fixed by the `key` in the manifest. Registration paths come from your account's real home folder, not a redirected `$HOME`.
 - For Brave, Edge, Vivaldi or another Chromium browser on Linux or macOS, set `GENTLE_CHROME_NATIVE_HOSTS_DIR` to that browser's `NativeMessagingHosts` folder; the helper manifest goes there instead of the default folders.
-- The install refuses a non-empty folder that is not a previous copy (no `manifest.json` named "Gentle Shell Browser"), never deletes anything, and only writes inside the target.
+- The install refuses a non-empty folder that is not a previous copy (no `manifest.json` named "Gentle Shell Browser"), and never deletes anything. It writes only the extension folder, the helper folder next to it (`<folder>-host`), its records in the config folder, and the helper's registration (the manifest files or the registry key above).
 - The helper starts the Node that ran the install. When a Gentle Shell reinstall or Node upgrade removes that Node, Chrome cannot start the helper. The session says so when it starts and in `/browser status`; `/browser update` rewrites the helper with the session's Node.
 - On WSL, the script also picks the WSL distribution the helper starts; see [the architecture notes](docs/ARCHITECTURE.md#the-native-messaging-helper) and [Troubleshooting](#troubleshooting).
 
