@@ -562,14 +562,14 @@ function commandSetup(options: { running?: boolean; confirm?: boolean; hasUI?: b
 
 const NEVER_CONFIRM = {
 	title: "Switch Gentle Chrome to Never ask?",
-	message: "Nothing will ask for your approval anymore: the agent does whatever it is told, payments and deletions included. Only the session's tab group and STOP limit it.",
+	message: "Nothing but file uploads will ask for your approval anymore: the agent does whatever it is told, payments and deletions included. Only the session's tab group and STOP limit it.",
 };
 
 test("/browser level shows the permission mode", async () => {
 	const expected: Record<string, string> = {
 		always: "Gentle Chrome: permission mode is Always ask — asks before every step.",
 		remember: "Gentle Chrome: permission mode is Remember my decisions — asks, and you can save allow or deny per site and action type.",
-		never: "Gentle Chrome: permission mode is Never ask — does whatever you tell it; only the session group and STOP limit it.",
+		never: "Gentle Chrome: permission mode is Never ask — does whatever you tell it (file uploads still ask); only the session group and STOP limit it.",
 	};
 	for (const [level, line] of Object.entries(expected)) {
 		const { fake, context, calls } = commandSetup({ level });
@@ -590,7 +590,7 @@ test("/browser level always and remember set the mode at once, without confirmin
 
 test("/browser level never asks the user to confirm and only then sets it; declined or no UI changes nothing", async () => {
 	const confirmed = commandSetup({ confirm: true });
-	assert.deepEqual(await levelCommand(confirmed.fake, "never", confirmed.context), ["Gentle Chrome: permission mode set to Never ask — does whatever you tell it; only the session group and STOP limit it."]);
+	assert.deepEqual(await levelCommand(confirmed.fake, "never", confirmed.context), ["Gentle Chrome: permission mode set to Never ask — does whatever you tell it (file uploads still ask); only the session group and STOP limit it."]);
 	assert.deepEqual(confirmed.confirms, [NEVER_CONFIRM]);
 	assert.deepEqual(confirmed.calls, [{ method: "setLevel", params: { level: "never" } }]);
 	for (const options of [{ confirm: false }, { hasUI: false }]) {

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { sessionHandlers } from "../extension/lib/sessions.js";
-import { chatKey, cleanChatName, parseRows, WhatsAppWatch, watchPopup } from "../extension/lib/whatsapp.js";
+import { chatKey, cleanChatName, openChatAllowed, openChatExpression, parseRows, WhatsAppWatch, watchPopup } from "../extension/lib/whatsapp.js";
 
 const WA = "https://web.whatsapp.com/";
 
@@ -518,4 +518,68 @@ test("whatsappUnread does not answer for a tab outside the session's group", asy
 	await watch.report(7, [row("Andy", "uno", "1")]);
 	const handlers = sessionHandlers({} as any, beta as any, { watch } as any);
 	assert.deepEqual(await handlers.whatsappUnread({ chat: "Andy", tabId: 7 }), { unread: 0 });
+});
+
+// Upload: which WhatsApp chat is open, read from the page and checked against the allow list.
+
+/** A tiny stand-in for the DOM parts the open chat probe reads. */
+function fakeElement(options: { attrs?: Record<string, string>; text?: string; children?: any[]; matches?: string[] } = {}): any {
+	const element: any = {
+		attrs: options.attrs ?? {},
+		textContent: options.text ?? "",
+		children: options.children ?? [],
+		matches: options.matches ?? [],
+		getAttribute: (name: string) => element.attrs[name] ?? null,
+		descendants(): any[] {
+			return element.children.flatMap((child: any) => [child, ...child.descendants()]);
+		},
+		querySelectorAll(selector: string) {
+			const wanted = selector.split(",").map((part) => part.trim());
+			return element.descendants().filter((node: any) => wanted.some((part) => node.matches.includes(part)));
+		},
+		querySelector(selector: string) {
+			return element.querySelectorAll(selector)[0] ?? null;
+		},
+		contains(node: any) {
+			return node === element || element.descendants().includes(node);
+		},
+	};
+	return element;
+}
+
+const titled = (title: string) => fakeElement({ attrs: { title }, text: title, matches: ["span[title]"] });
+const chatRow = (name: string, last: string) => fakeElement({ matches: ['[role="listitem"]'], children: [titled(name), titled(last)] });
+
+function fakeDocument(header: any, rows: any[]) {
+	const main = fakeElement({ matches: ["#main"], children: header ? [header] : [] });
+	const pane = fakeElement({ matches: ["#pane-side"], children: rows });
+	return fakeElement({ children: [main, pane] });
+}
+
+/** Runs the probe against a fake document, as the page would. */
+const probe = (document: unknown) => new Function("document", `return ${openChatExpression()}`)(document);
+
+test("the open chat probe reads the conversation header's name and the chat list's names, and nothing else", () => {
+	const name = fakeElement({ attrs: { dir: "auto" }, text: "  Mamá ", matches: ['header span[dir="auto"]', 'span[dir="auto"]'] });
+	const header = fakeElement({ matches: ["#main header", "header"], children: [name, titled("click here for contact info")] });
+	const found = probe(fakeDocument(header, [chatRow("Mamá", "hola"), chatRow("Juan", "chau")]));
+	assert.deepEqual(found, { open: "Mamá", rows: [{ titles: ["Mamá", "hola"], badges: [] }, { titles: ["Juan", "chau"], badges: [] }] });
+	assert.deepEqual(probe(fakeDocument(undefined, [chatRow("Mamá", "hola")])), { open: null, rows: [{ titles: ["Mamá", "hola"], badges: [] }] });
+	// Only reads: no clicks, focus, edits or new elements.
+	assert.doesNotMatch(openChatExpression(), /\.(click|focus|remove|append|prepend|replaceWith|setAttribute|insertAdjacent\w*|dispatchEvent)\(|innerHTML|outerHTML|(textContent|value)\s*=[^=]/);
+});
+
+test("an open chat counts as allowed only when it is on the allow list and exactly one chat row has its name", () => {
+	const rows = (...names: string[]) => names.map((name) => ({ titles: [name, "last"], badges: [] }));
+	assert.equal(openChatAllowed({ open: "Mamá", rows: rows("Mamá", "Juan") }, ["mamá"]), true);
+	assert.equal(openChatAllowed({ open: " MAMÁ\u200e ", rows: rows("Mamá") }, ["Mamá"]), true);
+	assert.equal(openChatAllowed({ open: "Juan", rows: rows("Mamá", "Juan") }, ["Mamá"]), false);
+	assert.equal(openChatAllowed({ open: "Mamá", rows: rows("Mamá", "Juan", "mamá") }, ["Mamá"]), false);
+	assert.equal(openChatAllowed({ open: "Mamá", rows: rows("Juan") }, ["Mamá"]), false);
+	assert.equal(openChatAllowed({ open: "", rows: rows("Mamá") }, ["Mamá"]), false);
+	assert.equal(openChatAllowed({ open: null, rows: rows("Mamá") }, ["Mamá"]), false);
+	assert.equal(openChatAllowed({ open: "Mamá" }, ["Mamá"]), false);
+	assert.equal(openChatAllowed(null, ["Mamá"]), false);
+	assert.equal(openChatAllowed("Mamá", ["Mamá"]), false);
+	assert.equal(openChatAllowed({ open: "Mamá", rows: rows("Mamá") }, []), false);
 });

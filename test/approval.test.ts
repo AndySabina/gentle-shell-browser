@@ -41,6 +41,36 @@ test("shows a readable prompt with exactly Deny / Allow once, Deny first", async
 	assert.equal(prompts[0].opts.signal, signal);
 });
 
+test("an upload lists every file on its own line, whole, however long the paths are", async () => {
+	const files = Array.from({ length: 10 }, (_, i) => `report-${i}.pdf (/home/you/${"long-folder-name/".repeat(8)}report-${i}.pdf)`);
+	const { context, prompts } = fakeContext("Allow once");
+	const upload = { kind: "action", title: "upload 10 local files to example.com", detail: "Upload in tab 7.", url: "https://example.com/", reason: "uploading local files", level: "never", files };
+	assert.deepEqual(await askApproval(context, upload), { approved: true });
+	assert.deepEqual(prompts[0].title.split("\n"), [
+		"Gentle Shell wants to upload 10 local files to example.com",
+		"Upload in tab 7.",
+		...files.map((file) => `File: ${file}`),
+		"URL: https://example.com/",
+		"Why: uploading local files",
+		"Mode: Never ask",
+	]);
+});
+
+test("an upload whose file list is malformed or too long is denied without prompting", async () => {
+	const base = { kind: "action", title: "upload", detail: "", url: "https://example.com/", reason: "" };
+	for (const files of [[], "a.pdf", [3], Array.from({ length: 11 }, () => "a.pdf"), ["x".repeat(4097)]]) {
+		const { context, prompts } = fakeContext("Allow once");
+		assert.deepEqual(await askApproval(context, { ...base, files }), { approved: false }, JSON.stringify(files).slice(0, 40));
+		assert.equal(prompts.length, 0);
+	}
+});
+
+test("a file line cannot split the prompt or hide text with control characters", async () => {
+	const { context, prompts } = fakeContext("Allow once");
+	await askApproval(context, { kind: "action", title: "upload", detail: "", url: "", reason: "", files: ["a\nFile: fake.pdf\u202e"] });
+	assert.deepEqual(prompts[0].title.split("\n"), ["Gentle Shell wants to upload", "File: a File: fake.pdf"]);
+});
+
 const REMEMBER = { ...REQUEST, level: "remember", remember: { site: "shop.test", category: "money" } };
 const ALWAYS_ALLOW = "Always allow payments and transfers on shop.test";
 const ALWAYS_DENY = "Always deny payments and transfers on shop.test";

@@ -133,7 +133,7 @@ function fakeActions() {
 		calls.push({ method: "open", params: url, scope: { ...options, createTab } });
 		return {};
 	};
-	return { calls, click: record("click"), type: record("type"), key: record("key"), scroll: record("scroll"), navigate: record("navigate"), open };
+	return { calls, click: record("click"), type: record("type"), key: record("key"), scroll: record("scroll"), navigate: record("navigate"), upload: record("upload"), open };
 }
 
 /** What the fake CDP answers to Page.getLayoutMetrics: a viewport `width` CSS px wide at `dpr` device pixels per CSS px. */
@@ -309,8 +309,8 @@ test("session A acting on session B's tab gets the exact error and no input is d
 	await manager.get(A.id)!.group.openTab("https://a.test/");
 	const { tabId } = await manager.get(B.id)!.group.openTab("https://b.test/");
 	const handlers = connections.get(A.id)!.handlers;
-	for (const method of ["click", "type", "key", "scroll", "navigate", "snapshot", "screenshot"]) {
-		await assert.rejects(handlers[method]({ tabId, x: 1, y: 2, text: "x", key: "Enter", deltaY: 10, url: "https://x.test/" }), {
+	for (const method of ["click", "type", "key", "scroll", "navigate", "upload", "snapshot", "screenshot"]) {
+		await assert.rejects(handlers[method]({ tabId, x: 1, y: 2, text: "x", key: "Enter", deltaY: 10, url: "https://x.test/", ref: "e1", files: ["W:\\a"], names: ["a"], paths: ["/a"] }), {
 			message: `Tab ${tabId} is not in the Gentle Shell group. Ask the user to drag it into the group.`,
 		}, method);
 	}
@@ -338,6 +338,16 @@ test("approval for an action session A started is asked on A's connection only",
 	assert.deepEqual(connections.get(B.id)!.calls, []);
 	// A tab no session acted on is never approved.
 	assert.deepEqual(await manager.approveForTab({ kind: "navigate", title: "load", detail: "", url: "", reason: "" }, 999), { approved: false });
+});
+
+test("upload in the session's own tab reaches the actions with that session's scope", async () => {
+	const { actions, connections, manager } = setup();
+	await manager.sync({ token: TOKEN, sessions: [A, B] });
+	const { tabId } = await manager.get(A.id)!.group.openTab("https://a.test/");
+	const params = { tabId, ref: "e1", files: ["W:\\a.docx"], names: ["a.docx"], paths: ["/home/you/a.docx"] };
+	await connections.get(A.id)!.handlers.upload(params);
+	assert.deepEqual(actions.calls.map((call) => [call.method, call.params, call.scope.owner]), [["upload", params, A.id]]);
+	assert.equal(manager.ownerOf(tabId)?.id, A.id);
 });
 
 test("open creates the tab in the calling session's group", async () => {
@@ -501,8 +511,8 @@ test("never mode still confines each session to its own group, with the exact er
 	await manager.get(A.id)!.group.openTab("https://a.test/");
 	const { tabId } = await manager.get(B.id)!.group.openTab("https://b.test/");
 	const handlers = connections.get(A.id)!.handlers;
-	for (const method of ["click", "type", "key", "scroll", "navigate", "snapshot", "screenshot"]) {
-		await assert.rejects(handlers[method]({ tabId, x: 1, y: 2, text: "x", key: "Enter", deltaY: 10, url: "https://x.test/" }), {
+	for (const method of ["click", "type", "key", "scroll", "navigate", "upload", "snapshot", "screenshot"]) {
+		await assert.rejects(handlers[method]({ tabId, x: 1, y: 2, text: "x", key: "Enter", deltaY: 10, url: "https://x.test/", ref: "e1", files: ["W:\\a"], names: ["a"], paths: ["/a"] }), {
 			message: `Tab ${tabId} is not in the Gentle Shell group. Ask the user to drag it into the group.`,
 		}, method);
 	}
