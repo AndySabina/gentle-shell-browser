@@ -60,7 +60,18 @@ function setup() {
 /** Runs the script with only the given environment: no inherited PATH entries, no WSL_DISTRO_NAME unless passed. */
 function run(paths: ReturnType<typeof setup>, args: string[], env: Record<string, string> = {}) {
 	const result = spawnSync("bash", [script, ...args], {
-		env: { PATH: `${paths.bin}:/usr/bin:/bin`, HOME: paths.home, GENTLE_CHROME_CONFIG_DIR: paths.config, GENTLE_CHROME_DURABLE_DIR: paths.durable, FAKE_DRIVE: paths.drive, ...env },
+		// Pinned to WSL with a scratch manifest folder: on a native Linux or macOS machine detection would
+		// otherwise pick that platform and write into the real account's Chrome folder.
+		env: {
+			PATH: `${paths.bin}:/usr/bin:/bin`,
+			HOME: paths.home,
+			GENTLE_CHROME_CONFIG_DIR: paths.config,
+			GENTLE_CHROME_DURABLE_DIR: paths.durable,
+			GENTLE_CHROME_PLATFORM: "wsl",
+			GENTLE_CHROME_NATIVE_HOSTS_DIR: join(paths.home, "native-hosts"),
+			FAKE_DRIVE: paths.drive,
+			...env,
+		},
 		encoding: "utf8",
 		// A fake that waits for input must fail the test, not leave it running.
 		timeout: 30_000,
