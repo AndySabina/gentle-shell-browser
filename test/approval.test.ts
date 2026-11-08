@@ -41,6 +41,62 @@ test("shows a readable prompt with exactly Deny / Allow once, Deny first", async
 	assert.equal(prompts[0].opts.signal, signal);
 });
 
+test("an upload lists every file on its own line, whole, however long the paths are", async () => {
+	const files = Array.from({ length: 10 }, (_, i) => `report-${i}.pdf (/home/you/${"long-folder-name/".repeat(8)}report-${i}.pdf)`);
+	const { context, prompts } = fakeContext("Allow once");
+	const upload = { kind: "action", title: "upload 10 local files to example.com", detail: "Upload in tab 7.", url: "https://example.com/", reason: "uploading local files", level: "never", files };
+	assert.deepEqual(await askApproval(context, upload), { approved: true });
+	assert.deepEqual(prompts[0].title.split("\n"), [
+		"Gentle Shell wants to upload 10 local files to example.com",
+		"Upload in tab 7.",
+		...files.map((file) => `File: ${file}`),
+		"URL: https://example.com/",
+		"Why: uploading local files",
+		"Mode: Never ask",
+	]);
+});
+
+test("an upload whose file list is malformed or too long is denied without prompting", async () => {
+	const base = { kind: "action", title: "upload", detail: "", url: "https://example.com/", reason: "" };
+	for (const files of [[], "a.pdf", [3], Array.from({ length: 11 }, () => "a.pdf"), ["x".repeat(4097)]]) {
+		const { context, prompts } = fakeContext("Allow once");
+		assert.deepEqual(await askApproval(context, { ...base, files }), { approved: false }, JSON.stringify(files).slice(0, 40));
+		assert.equal(prompts.length, 0);
+	}
+});
+
+test("a file line cannot split the prompt or hide text with control characters", async () => {
+	const { context, prompts } = fakeContext("Allow once");
+	await askApproval(context, { kind: "action", title: "upload", detail: "", url: "", reason: "", files: ["a\nFile: fake.pdf\u202e"] });
+	assert.deepEqual(prompts[0].title.split("\n"), ["Gentle Shell wants to upload", "File: a File: fake.pdf"]);
+});
+
+test("a file line of 4096 characters is shown whole; 4097 is denied without prompting", async () => {
+	const base = { kind: "action", title: "upload", detail: "", url: "", reason: "" };
+	const whole = "a".repeat(4096);
+	const shown = fakeContext("Allow once");
+	assert.deepEqual(await askApproval(shown.context, { ...base, files: [whole] }), { approved: true });
+	assert.deepEqual(shown.prompts[0].title.split("\n"), ["Gentle Shell wants to upload", `File: ${whole}`]);
+	const clipped = fakeContext("Allow once");
+	assert.deepEqual(await askApproval(clipped.context, { ...base, files: [`${whole}a`] }), { approved: false });
+	assert.deepEqual(clipped.prompts, []);
+});
+
+test("the Arabic letter mark (U+061C) from the page is stripped like the other bidi controls", async () => {
+	const { context, prompts } = fakeContext("Deny");
+	await askApproval(context, { kind: "action", title: "upload \u061cfdp.exe", detail: "", url: "", reason: "", files: ["a\u061c.pdf"] });
+	assert.equal(prompts[0].title.includes("\u061c"), false);
+	assert.deepEqual(prompts[0].title.split("\n"), ["Gentle Shell wants to upload  fdp.exe", "File: a .pdf"]);
+});
+
+test("an upload never offers Always allow or Always deny, even when the request carries remember", async () => {
+	const upload = { ...REQUEST, level: "remember", remember: { site: "shop.test", category: "click" }, files: ["a.pdf (/home/you/a.pdf)"] };
+	const { context, prompts } = fakeContext("Always allow clicks on shop.test");
+	assert.deepEqual(await askApproval(context, upload), { approved: false });
+	assert.deepEqual(prompts[0].options, ["Deny", "Allow once"]);
+	assert.deepEqual(await askApproval(fakeContext("Allow once").context, upload), { approved: true });
+});
+
 const REMEMBER = { ...REQUEST, level: "remember", remember: { site: "shop.test", category: "money" } };
 const ALWAYS_ALLOW = "Always allow payments and transfers on shop.test";
 const ALWAYS_DENY = "Always deny payments and transfers on shop.test";

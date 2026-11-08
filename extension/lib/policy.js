@@ -112,8 +112,9 @@ const BILLING_TERMS = new Set(["billing", "facturacion", "payment methods", "met
  * @typedef {{
  *   tag?: string, type?: string, name?: string, autocomplete?: string, fieldName?: string, id?: string,
  *   role?: string, editable?: boolean, isSubmit?: boolean, formFields?: FormField[],
- *   inForm?: boolean, formAction?: string, searchLandmark?: boolean, shadowHost?: boolean,
- * }} ElementFacts element facts read from the page; `fieldName` is the name attribute, `name` the visible name
+ *   inForm?: boolean, formAction?: string, searchLandmark?: boolean, shadowHost?: boolean, multiple?: boolean,
+ * }} ElementFacts element facts read from the page; `fieldName` is the name attribute, `name` the visible name,
+ *   `multiple` whether an input takes several files
  * @typedef {{risky: boolean, reason?: string}} Verdict
  * @typedef {FormField & {label?: string}} PageField a visible input; `label` is its aria-label or label text
  * @typedef {{fields?: PageField[], submits?: string[], frames?: string[], headings?: string[]}} PageSignals

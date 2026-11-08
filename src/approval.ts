@@ -6,6 +6,7 @@ import type { ExtensionUIDialogOptions } from "@earendil-works/pi-coding-agent";
  * ("Deny" is listed first, so it is the default). In remember mode the
  * request names the site and category, and the user may also save "Always
  * allow" or "Always deny" for them; the extension stores that decision.
+ * Uploads never offer them.
  */
 
 export type Category = "navigate" | "click" | "type" | "key" | "scroll" | "money" | "irreversible";
@@ -20,6 +21,8 @@ export interface ApprovalRequest {
 	level?: string;
 	/** Offered only in remember mode: the answer may be saved for this site and category. */
 	remember?: { site: string; category: Category };
+	/** An upload's files, each shown whole on its own line so the user sees everything they allow. */
+	files?: string[];
 }
 
 export interface ApprovalAnswer {
@@ -37,6 +40,9 @@ export const DENY = "Deny";
 /** The extension waits 5 minutes; the prompt closes with it. */
 const PROMPT_TIMEOUT_MS = 5 * 60_000;
 const KINDS = new Set(["navigate", "open", "action"]);
+/** The upload limit, and a bound on one file line. */
+const MAX_FILES = 10;
+const MAX_FILE_LINE = 4096;
 const MODE_NAMES: Record<string, string> = { always: "Always ask", remember: "Remember my decisions", never: "Never ask" };
 /** "Always allow <label> on <site>"; the same words as the extension's popup. */
 export const CATEGORY_LABELS: Record<Category, string> = {
@@ -54,7 +60,7 @@ export const CATEGORY_LABELS: Record<Category, string> = {
  * bidi overrides that reorder what the user reads, and line separators; clip.
  */
 function clean(text: string, max = 300): string {
-	const flat = text.replace(/[\u0000-\u001f\u007f-\u009f\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g, " ").trim();
+	const flat = text.replace(/[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g, " ").trim();
 	return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 }
 
@@ -74,6 +80,9 @@ export function parseApprovalRequest(value: unknown): ApprovalRequest | undefine
 	for (const key of ["detail", "url", "reason"]) if (typeof request[key] !== "string") return undefined;
 	const remember = request.remember === undefined ? undefined : parseRemember(request.remember);
 	if (request.remember !== undefined && !remember) return undefined;
+	const files = request.files;
+	// A list the prompt cannot show whole is no request: the user would allow files they never saw.
+	if (files !== undefined && !(Array.isArray(files) && files.length > 0 && files.length <= MAX_FILES && files.every((file) => typeof file === "string" && file.length <= MAX_FILE_LINE))) return undefined;
 	return {
 		kind: request.kind as ApprovalRequest["kind"],
 		title: request.title,
@@ -82,6 +91,7 @@ export function parseApprovalRequest(value: unknown): ApprovalRequest | undefine
 		reason: request.reason as string,
 		level: typeof request.level === "string" ? request.level : undefined,
 		...(remember ? { remember } : {}),
+		...(files ? { files: files as string[] } : {}),
 	};
 }
 
@@ -90,6 +100,7 @@ export async function askApproval(context: ApprovalContext | undefined, value: u
 	if (!request || !context?.hasUI) return { approved: false };
 	const lines = [`Gentle Shell wants to ${clean(request.title)}`];
 	if (request.detail.trim()) lines.push(clean(request.detail));
+	for (const file of request.files ?? []) lines.push(`File: ${clean(file, MAX_FILE_LINE)}`);
 	if (request.url.trim()) lines.push(`URL: ${clean(request.url, 500)}`);
 	if (request.reason.trim()) lines.push(`Why: ${clean(request.reason)}`);
 	if (request.level && MODE_NAMES[request.level]) lines.push(`Mode: ${MODE_NAMES[request.level]}`);
@@ -97,7 +108,8 @@ export async function askApproval(context: ApprovalContext | undefined, value: u
 		[DENY, { approved: false }],
 		[ALLOW_ONCE, { approved: true }],
 	]);
-	if (request.remember) {
+	// An upload's answer is never saved, whatever the request offers.
+	if (request.remember && !request.files) {
 		const { site, category } = request.remember;
 		answers.set(`Always allow ${CATEGORY_LABELS[category]} on ${site}`, { approved: true, remember: "allow" });
 		answers.set(`Always deny ${CATEGORY_LABELS[category]} on ${site}`, { approved: false, remember: "deny" });

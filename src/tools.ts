@@ -1,6 +1,8 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { Unanswered } from "../extension/lib/rpc.js";
+import { basename } from "node:path";
+import { MAX_UPLOAD_FILES, type PreparedUpload, prepareUpload } from "./upload.ts";
 
 /** Sends one request to the Chrome extension, such as the controller's `call`. */
 export type BrowserCall = (method: string, params: unknown, options?: { timeoutMs?: number; signal?: AbortSignal }) => Promise<unknown>;
@@ -73,7 +75,12 @@ interface ActionResult {
 	verified?: boolean;
 	/** type only: why the field's value could not be checked. */
 	unverified?: string;
+	/** upload only: the names of the real files attached. */
+	attached?: string[];
 }
+
+/** Checks the files of an upload and makes their paths readable for Chrome; throws when one is refused. */
+export type PrepareUpload = (files: string[]) => Promise<PreparedUpload>;
 
 // Descriptions are sent on every turn: keep them short. Each fact is stated
 // once: the group limit in browser_tabs, untrusted text in browser_snapshot,
@@ -93,7 +100,7 @@ export function setBrowserToolsActive(pi: Pick<ExtensionAPI, "getActiveTools" | 
 	if (next.length !== current.length) pi.setActiveTools(next);
 }
 
-const ACTIONS = ["click", "type", "key", "scroll", "navigate", "open", "back", "forward", "reload"] as const;
+const ACTIONS = ["click", "type", "key", "scroll", "navigate", "open", "back", "forward", "reload", "upload"] as const;
 type Action = (typeof ACTIONS)[number];
 
 interface ActParams {
@@ -112,6 +119,7 @@ interface ActParams {
 	clickCount?: number;
 	url?: string;
 	risky?: boolean;
+	files?: string[];
 }
 
 /** The fields each action sends to the extension method it maps to, as the extension takes them. */
@@ -126,7 +134,13 @@ const FIELDS: Record<Action, (keyof ActParams)[]> = {
 	back: ["tabId", "risky"],
 	forward: ["tabId", "risky"],
 	reload: ["tabId", "risky"],
+	// The session sends the checked files itself (uploadRequest); upload takes no risky flag: it always asks unless the chat is allowed.
+	upload: ["tabId", "ref"],
 };
+
+/** Whether `files` is a list of 1 to 10 paths. */
+const isFileList = (files: unknown): files is string[] =>
+	Array.isArray(files) && files.length >= 1 && files.length <= MAX_UPLOAD_FILES && files.every((file) => typeof file === "string" && file.length > 0);
 
 /** What `action` misses to run, or undefined. */
 function missing(params: ActParams): string | undefined {
@@ -137,6 +151,8 @@ function missing(params: ActParams): string | undefined {
 	if (params.action === "key" && !has("key")) return "key";
 	if (params.action === "scroll" && !has("deltaY") && !has("deltaX")) return "deltaY or deltaX";
 	if ((params.action === "navigate" || params.action === "open") && !has("url")) return "url";
+	if (params.action === "upload" && (typeof params.ref !== "string" || !params.ref)) return "ref";
+	if (params.action === "upload" && !isFileList(params.files)) return `files (1 to ${MAX_UPLOAD_FILES} local paths)`;
 	return undefined;
 }
 
@@ -165,7 +181,7 @@ function unguardedLine(result: { unguardedNavigation?: { url: string } }): strin
 }
 
 /** What a browser_act step did, in one line. */
-function doneLine(params: ActParams): string {
+function doneLine(params: ActParams, result: ActionResult): string {
 	const tab = `tab ${params.tabId}`;
 	const target = params.ref !== undefined ? `element ${params.ref}` : `at (${params.x}, ${params.y})`;
 	switch (params.action) {
@@ -182,6 +198,11 @@ function doneLine(params: ActParams): string {
 			return `Scrolled by (${params.deltaX ?? 0}, ${params.deltaY ?? 0}) in ${tab}.`;
 		case "navigate":
 			return `Navigated ${tab}.`;
+		case "upload": {
+			// The extension names what it attached by the real files, which a symlink may hide.
+			const names = Array.isArray(result.attached) ? result.attached : (params.files ?? []).map((file) => basename(file));
+			return `Attached ${names.length} file${names.length === 1 ? "" : "s"} to element ${params.ref} in ${tab}: ${names.join(", ")}.`;
+		}
 		case "back":
 			return `Went back in ${tab}.`;
 		case "forward":
@@ -193,7 +214,7 @@ function doneLine(params: ActParams): string {
 
 /** The result of a step: where the tab is only when it moved; a document load always moves it. */
 function actText(params: ActParams, result: ActionResult, loaded: boolean): string {
-	const lines = [doneLine(params)];
+	const lines = [doneLine(params, result)];
 	if (result.verified === true) lines.push("The field's value changed.");
 	if (typeof result.unverified === "string") lines.push(`Not verified (${result.unverified}): check the field with browser_snapshot.`);
 	if (loaded || result.urlChanged) lines.push(pageLine(result), ...riskLines(result), SNAPSHOT_AGAIN);
@@ -256,7 +277,13 @@ const tabIdField = Type.Integer();
  * Every tool runs sequentially: one browser step at a time, in the order the model asked.
  * None is active at first: the controller shows them while Chrome is connected (setBrowserToolsActive).
  */
-export function registerBrowserTools(pi: Pick<ExtensionAPI, "registerTool">, call: BrowserCall, cancel: () => Promise<unknown> = () => call("cancel", {})): void {
+export function registerBrowserTools(
+	pi: Pick<ExtensionAPI, "registerTool">,
+	call: BrowserCall,
+	cancel: () => Promise<unknown> = () => call("cancel", {}),
+	options: { prepareUpload?: PrepareUpload } = {},
+): void {
+	const prepare = options.prepareUpload ?? ((files) => prepareUpload(files));
 	pi.registerTool({
 		name: "browser_tabs",
 		label: "Browser tabs",
@@ -289,7 +316,7 @@ export function registerBrowserTools(pi: Pick<ExtensionAPI, "registerTool">, cal
 		executionMode: "sequential",
 		defaultActive: false,
 		description:
-			'One step in a group tab (tabId; not for open). click: ref, or x,y in viewport CSS px. type: text into ref or the focus; clear empties it, submit presses Enter. key: e.g. Enter, Control+a. scroll: deltaY > 0 is down (600 ≈ a screen). navigate/open: url (open uses a new tab). Use refs from the latest browser_snapshot (preferred). May wait for user approval; on "The user did not approve:" do not retry unless asked. STOP ends the run: do not retry. risky: true only adds an approval.',
+			'One step in a group tab (tabId; not for open). click: ref, or x,y in viewport CSS px. type: text into ref or the focus; clear empties it, submit presses Enter. key: e.g. Enter, Control+a. scroll: deltaY > 0 is down (600 ≈ a screen). navigate/open: url (open uses a new tab). upload: ref (a file input or what opens its chooser), files: 1-10 absolute paths; sensitive files are refused. Use refs from the latest browser_snapshot (preferred). May wait for user approval; on "The user did not approve:" do not retry unless asked. STOP ends the run: do not retry. risky: true only adds an approval.',
 		parameters: Type.Object({
 			action: Type.Enum([...ACTIONS]),
 			tabId: Type.Optional(tabIdField),
@@ -305,11 +332,15 @@ export function registerBrowserTools(pi: Pick<ExtensionAPI, "registerTool">, cal
 			button: Type.Optional(Type.Enum(["left", "right", "middle"])),
 			clickCount: Type.Optional(Type.Integer({ minimum: 1, maximum: 3 })),
 			url: Type.Optional(Type.String()),
+			// 1 to 10: checked in the session (actRequest), as the description says.
+			files: Type.Optional(Type.Array(Type.String())),
 			// The extension forwards only `true`: the model can add an approval, never remove one.
 			risky: Type.Optional(Type.Boolean({ description: "Sensitive step (money, messages, account, irreversible)." })),
 		}),
 		async execute(_id, params, signal) {
 			const request = actRequest(params);
+			// Refused files never reach Chrome: they are checked before the call.
+			if (request.method === "upload") Object.assign(request.params, await prepare(params.files ?? []));
 			let result: ActionResult | OpenedTab;
 			try {
 				result = (await call(request.method, request.params, { timeoutMs: ACT_TIMEOUT_MS, signal })) as ActionResult | OpenedTab;

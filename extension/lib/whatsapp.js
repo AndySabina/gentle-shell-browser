@@ -105,6 +105,58 @@ export function parseRows(rows) {
 	return chats;
 }
 
+/**
+ * Runs inside a WhatsApp Web tab. Self-contained: serialized with `.toString()`.
+ * Only reads: the name in the open conversation's header (null when none
+ * shows) and the chat list's rows, as the content script reads them.
+ */
+function openChat() {
+	const MAX_ROWS = 100;
+	const header = document.querySelector("#main header");
+	const named = header?.querySelector('span[dir="auto"]') ?? header?.querySelector("span[title]");
+	const open = (named?.getAttribute("title") || named?.textContent || "").trim() || null;
+	const pane = document.querySelector("#pane-side");
+	const all = pane ? [...pane.querySelectorAll('[role="listitem"], [role="row"]')] : [];
+	// A row inside another row is the same chat.
+	const rows = all
+		.filter((row) => !all.some((other) => other !== row && other.contains(row)))
+		.slice(0, MAX_ROWS)
+		.map((row) => ({ titles: [...row.querySelectorAll("span[title]")].map((span) => span.getAttribute("title") ?? ""), badges: [] }));
+	return { open, rows };
+}
+
+/** Expression for Debugger.evaluate: the open chat's name and the chat list's rows (see openChat). */
+export function openChatExpression() {
+	return `(${openChat.toString()})()`;
+}
+
+/**
+ * Whether an upload into the open chat may go ahead without asking: its name
+ * is on the allow list and exactly one chat row has it. A name that cannot be
+ * read, or that two rows share, is never allowed.
+ * @param {unknown} found what openChatExpression returned
+ * @param {string[]} allowed the allow list
+ */
+export function openChatAllowed(found, allowed) {
+	if (!found || typeof found !== "object") return false;
+	const { open, rows } = /** @type {{open?: unknown, rows?: unknown}} */ (found);
+	if (typeof open !== "string" || !clean(open) || !Array.isArray(rows)) return false;
+	const key = chatKey(open);
+	if (!allowed.some((name) => chatKey(name) === key)) return false;
+	const matches = parseRows(rows).filter((chat) => chatKey(chat.name) === key);
+	return matches.length === 1 && matches[0].ambiguous !== true;
+}
+
+/**
+ * The name of the open chat, as the upload prompt shows it; null when it
+ * cannot be read.
+ * @param {unknown} found what openChatExpression returned
+ */
+export function openChatName(found) {
+	const open = found && typeof found === "object" ? /** @type {{open?: unknown}} */ (found).open : undefined;
+	return (typeof open === "string" && clean(open)) || null;
+}
+
 /** What WhatsApp shows in place of the last message while someone types or records. */
 const TYPING = /^(?:.+ )?(?:is typing|está escribiendo|typing|escribiendo|recording audio|grabando audio)…$/i;
 
